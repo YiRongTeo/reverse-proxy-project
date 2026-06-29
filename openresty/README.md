@@ -109,7 +109,7 @@ curl http://localhost:8080/healthz
 
 | Device | Junction path | `device_type` | Module |
 |--------|---------------|---------------|--------|
-| F5 BIG-IP Load Balancer | `/f5/{session_id}/` | `f5_bigip` or `f5_load_balancer` | `devices/f5_bigip.lua` |
+| F5 BIG-IP Load Balancer | `/f5/{session_id}/`, `/f5lb/{session_id}/`, or `/f5_load_balancer/{session_id}/` | `f5_bigip` or `f5_load_balancer` | `devices/f5_bigip.lua` |
 | Infoblox NIOS | `/infoblox/{session_id}/` | `infoblox` | `devices/infoblox.lua` |
 | ZDNS | `/zdns/{session_id}/` | `zdns` | `devices/zdns.lua` |
 | Cisco ISE (TACACS) | `/ise/{session_id}/` | `cisco_ise_tacacs` | `devices/cisco_ise_tacacs.lua` |
@@ -156,7 +156,9 @@ docker compose exec valkey valkey-cli SET 'session:f5lb1' \
   '{"url":"https://10.10.10.10","device_type":"f5_load_balancer","host":"bigip.corp.local"}'
 ```
 
-Then open `http://localhost:8080/f5/f5lb1/` (redirects are followed server-side).
+Then open `http://localhost:8080/f5/f5lb1/`, `http://localhost:8080/f5lb/f5lb1/`, or `http://localhost:8080/f5_load_balancer/f5lb1/`.
+
+The session id is the path segment **after** the junction prefix (not the Valkey key prefix). Example: Valkey key `session:f5lb1` → browser URL `/f5/f5lb1/` (not `/f5lb1/`).
 
 **Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
 

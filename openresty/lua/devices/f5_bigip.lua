@@ -25,6 +25,7 @@ local ACCEPTED_DEVICE_TYPES = {
 local device = junction_device.new({
     name = "f5_bigip",
     junction_prefix = "/f5",
+    junction_prefixes = { "/f5", "/f5lb", "/f5_load_balancer" },
     max_redirects = 10,
     default_subpath = "/tmui/login.jsp",
     aggressive_absolute_rewrite = true,

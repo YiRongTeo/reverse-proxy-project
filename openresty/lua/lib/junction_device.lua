@@ -14,6 +14,7 @@ function _M.new(opts)
     local device = {
         name = opts.name,
         junction_prefix = opts.junction_prefix,
+        junction_prefixes = opts.junction_prefixes,
         follow_redirects = opts.follow_redirects ~= false,
         max_redirects = opts.max_redirects or 10,
         cors = {

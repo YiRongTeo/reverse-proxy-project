@@ -224,17 +224,83 @@ local function parse_session_value(raw)
     return nil, "invalid session value"
 end
 
-function _M.extract_from_uri(prefix)
-    local uri = ngx.var.uri or ""
-    local pattern = "^" .. prefix .. "/([^/]+)(/.*)?$"
-    local session_id, subpath = uri:match(pattern)
+local function escape_pattern(value)
+    return value:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+end
 
-    if not session_id then
-        return nil, nil, "invalid session path"
+local function normalize_prefix(prefix)
+    if type(prefix) ~= "string" then
+        return ""
     end
 
-    subpath = subpath or "/"
-    return session_id, subpath
+    prefix = prefix:match("^%s*(.-)%s*$") or ""
+    prefix = prefix:gsub("/+$", "")
+    if prefix ~= "" and prefix:sub(1, 1) ~= "/" then
+        prefix = "/" .. prefix
+    end
+    return prefix
+end
+
+local function collect_prefix_candidates(prefix)
+    local candidates = {}
+    local seen = {}
+
+    local function add(raw)
+        local normalized = normalize_prefix(raw)
+        if normalized ~= "" and not seen[normalized] then
+            seen[normalized] = true
+            candidates[#candidates + 1] = normalized
+        end
+    end
+
+    if type(prefix) == "table" then
+        for _, raw in ipairs(prefix) do
+            add(raw)
+        end
+    else
+        add(prefix)
+    end
+
+    return candidates
+end
+
+function _M.extract_from_uri(prefix)
+    local uri = ngx.var.uri or ""
+    local candidates = collect_prefix_candidates(prefix)
+
+    -- Prefer the prefix that appears in the request URI.
+    local uri_prefix = normalize_prefix(uri:match("^(/[^/]+)"))
+    if uri_prefix ~= "" then
+        local filtered = { uri_prefix }
+        local seen = { [uri_prefix] = true }
+        for _, candidate in ipairs(candidates) do
+            if not seen[candidate] then
+                seen[candidate] = true
+                filtered[#filtered + 1] = candidate
+            end
+        end
+        candidates = filtered
+    end
+
+    if #candidates == 0 then
+        return nil, nil, "missing junction prefix"
+    end
+
+    for _, try_prefix in ipairs(candidates) do
+        local pattern = "^" .. escape_pattern(try_prefix) .. "/([^/]+)(/.*)?$"
+        local session_id, subpath = uri:match(pattern)
+        if session_id then
+            subpath = subpath or "/"
+            return session_id, subpath, nil, try_prefix
+        end
+    end
+
+    local primary = candidates[1]
+    if uri == primary or uri == primary .. "/" then
+        return nil, nil, "missing session id: use " .. primary .. "/{session_id}/"
+    end
+
+    return nil, nil, "invalid session path: uri=" .. uri .. " expected " .. primary .. "/{session_id}/..."
 end
 
 function _M.lookup(session_id)

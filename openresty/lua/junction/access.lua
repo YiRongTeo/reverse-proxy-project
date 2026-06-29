@@ -21,12 +21,31 @@ if not device then
     return proxy_util.deny(ngx.HTTP_NOT_FOUND, device_err)
 end
 
+local prefix_candidates = {}
+if junction_prefix ~= nil and junction_prefix ~= "" then
+    prefix_candidates[#prefix_candidates + 1] = junction_prefix
+end
+
+if type(device.junction_prefixes) == "table" then
+    for _, candidate in ipairs(device.junction_prefixes) do
+        prefix_candidates[#prefix_candidates + 1] = candidate
+    end
+elseif device.junction_prefix then
+    prefix_candidates[#prefix_candidates + 1] = device.junction_prefix
+end
+
 local cors_opts = device.cors or {}
 if cors.handle_preflight(cors_opts) then
     return
 end
 
-local session_id, subpath, parse_err = session_lookup.extract_from_uri(junction_prefix)
+local session_id, subpath, parse_err, matched_prefix = session_lookup.extract_from_uri(prefix_candidates)
+if matched_prefix and matched_prefix ~= "" then
+    junction_prefix = matched_prefix
+elseif junction_prefix == nil or junction_prefix == "" then
+    junction_prefix = device.junction_prefix or ""
+end
+
 if not session_id then
     ngx.log(ngx.WARN, "junction invalid session path uri=", ngx.var.uri or "",
         " prefix=", junction_prefix or "", " err=", parse_err or "")

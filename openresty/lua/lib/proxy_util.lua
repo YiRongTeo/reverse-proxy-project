@@ -20,9 +20,12 @@ function _M.preserve_client_ip()
 end
 
 function _M.deny(status, message)
+    message = message or "request rejected"
+    message = message:gsub("\\", "\\\\"):gsub('"', '\\"')
+
     ngx.status = status or ngx.HTTP_BAD_REQUEST
     ngx.header["Content-Type"] = "application/json"
-    ngx.say('{"error":"' .. (message or "request rejected") .. '"}')
+    ngx.say('{"error":"' .. message .. '"}')
     return ngx.exit(status or ngx.HTTP_BAD_REQUEST)
 end
 
