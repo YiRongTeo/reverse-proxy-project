@@ -2,7 +2,16 @@ local cors = require "lib.cors"
 local device_registry = require "lib.device_registry"
 local html_rewrite = require "lib.html_rewrite"
 local proxy_util = require "lib.proxy_util"
-local junction_session = require "lib.junction_session"
+
+local session_lookup = package.loaded["lib.junction_session"]
+if type(session_lookup) ~= "table" then
+    session_lookup = require "lib.junction_session"
+end
+
+if type(session_lookup) ~= "table" or type(session_lookup.extract_from_uri) ~= "function" then
+    ngx.log(ngx.ERR, "lib.junction_session unavailable, got ", type(session_lookup))
+    return proxy_util.deny(ngx.HTTP_INTERNAL_SERVER_ERROR, "session module unavailable")
+end
 
 local device_name = ngx.var.junction_device
 local junction_prefix = ngx.var.junction_prefix
@@ -17,14 +26,14 @@ if cors.handle_preflight(cors_opts) then
     return
 end
 
-local session_id, subpath, parse_err = junction_session.extract_from_uri(junction_prefix)
+local session_id, subpath, parse_err = session_lookup.extract_from_uri(junction_prefix)
 if not session_id then
     ngx.log(ngx.WARN, "junction invalid session path uri=", ngx.var.uri or "",
         " prefix=", junction_prefix or "", " err=", parse_err or "")
     return proxy_util.deny(ngx.HTTP_BAD_REQUEST, parse_err)
 end
 
-local session_data, lookup_err = junction_session.lookup(session_id)
+local session_data, lookup_err = session_lookup.lookup(session_id)
 if not session_data then
     ngx.log(ngx.WARN, "junction session lookup failed session_id=", session_id,
         " err=", lookup_err or "")
@@ -35,7 +44,7 @@ if device.validate_session and not device.validate_session(session_id, session_d
     return proxy_util.deny(ngx.HTTP_FORBIDDEN, "session not allowed for this junction")
 end
 
-local target_url, build_err = junction_session.build_upstream_url(session_data.url, subpath)
+local target_url, build_err = session_lookup.build_upstream_url(session_data.url, subpath)
 if not target_url then
     return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, build_err)
 end

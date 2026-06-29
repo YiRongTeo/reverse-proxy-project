@@ -179,4 +179,10 @@ function _M.build_upstream_url(base_url, subpath)
     return base_url .. subpath
 end
 
+if type(_M.extract_from_uri) ~= "function"
+    or type(_M.lookup) ~= "function"
+    or type(_M.build_upstream_url) ~= "function" then
+    error("lib.junction_session module is incomplete")
+end
+
 return _M
