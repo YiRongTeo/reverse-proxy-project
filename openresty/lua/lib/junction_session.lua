@@ -193,6 +193,30 @@ local function try_decode_json(raw)
     return nil, "json decode failed"
 end
 
+local function normalize_session_url(session)
+    if type(session) ~= "table" then
+        return session
+    end
+
+    local url = trim(session.url)
+    if not url or url == "" then
+        return session
+    end
+
+    if url:match("^https?://") then
+        session.url = url
+        return session
+    end
+
+    if url:match("^[%d%.:]+$") or url:match("^[%w%.%-:]+$") then
+        session.url = "https://" .. url
+    else
+        session.url = url
+    end
+
+    return session
+end
+
 local function parse_session_value(raw)
     if not raw or raw == "" then
         return nil, "empty session value"
@@ -204,19 +228,19 @@ local function parse_session_value(raw)
     if raw:find("{", 1, true) then
         session = extract_json_fields(raw)
         if session then
-            return session
+            return normalize_session_url(session)
         end
     end
 
     session = normalize_session_table(try_decode_json(raw))
     if session then
-        return session
+        return normalize_session_url(session)
     end
 
     if not raw:find("{", 1, true) then
         session = plain_url_session(raw)
         if session then
-            return session
+            return normalize_session_url(session)
         end
     end
 
@@ -264,23 +288,73 @@ local function collect_prefix_candidates(prefix)
     return candidates
 end
 
+local JUNCTION_BASE_PATH = normalize_prefix(os.getenv("JUNCTION_BASE_PATH"))
+
+local function strip_base_path(uri)
+    if JUNCTION_BASE_PATH == "" or uri == "" then
+        return uri
+    end
+
+    if uri == JUNCTION_BASE_PATH or uri == JUNCTION_BASE_PATH .. "/" then
+        return "/"
+    end
+
+    local base = JUNCTION_BASE_PATH .. "/"
+    if uri:sub(1, #base) == base then
+        return "/" .. uri:sub(#base + 1)
+    end
+
+    if uri:sub(1, #JUNCTION_BASE_PATH) == JUNCTION_BASE_PATH then
+        local rest = uri:sub(#JUNCTION_BASE_PATH + 1)
+        if rest == "" or rest:sub(1, 1) == "/" then
+            return rest == "" and "/" or rest
+        end
+    end
+
+    return uri
+end
+
+local function prioritize_prefix(candidates, preferred)
+    preferred = normalize_prefix(preferred)
+    if preferred == "" or #candidates == 0 then
+        return candidates
+    end
+
+    local ordered = {}
+    local seen = {}
+    local found = false
+
+    for _, candidate in ipairs(candidates) do
+        if candidate == preferred then
+            found = true
+            break
+        end
+    end
+
+    if not found then
+        return candidates
+    end
+
+    ordered[1] = preferred
+    seen[preferred] = true
+
+    for _, candidate in ipairs(candidates) do
+        if not seen[candidate] then
+            seen[candidate] = true
+            ordered[#ordered + 1] = candidate
+        end
+    end
+
+    return ordered
+end
+
 function _M.extract_from_uri(prefix)
-    local uri = ngx.var.uri or ""
+    local uri = strip_base_path(ngx.var.uri or "")
     local candidates = collect_prefix_candidates(prefix)
 
-    -- Prefer the prefix that appears in the request URI.
+    -- Only prioritize a URI prefix when it is a configured junction prefix.
     local uri_prefix = normalize_prefix(uri:match("^(/[^/]+)"))
-    if uri_prefix ~= "" then
-        local filtered = { uri_prefix }
-        local seen = { [uri_prefix] = true }
-        for _, candidate in ipairs(candidates) do
-            if not seen[candidate] then
-                seen[candidate] = true
-                filtered[#filtered + 1] = candidate
-            end
-        end
-        candidates = filtered
-    end
+    candidates = prioritize_prefix(candidates, uri_prefix)
 
     if #candidates == 0 then
         return nil, nil, "missing junction prefix"
@@ -311,12 +385,34 @@ function _M.lookup(session_id)
         return nil, "missing session id"
     end
 
-    local raw, err = valkey.get(SESSION_PREFIX .. session_id)
-    if not raw then
-        return nil, err
+    local keys = {}
+    local seen = {}
+
+    local function add_key(key)
+        if key and key ~= "" and not seen[key] then
+            seen[key] = true
+            keys[#keys + 1] = key
+        end
     end
 
-    return parse_session_value(raw)
+    add_key(SESSION_PREFIX .. session_id)
+    add_key(session_id)
+    local last_err = "session not found"
+
+    for _, key in ipairs(keys) do
+        local raw, err = valkey.get(key)
+        if raw then
+            local session, parse_err = parse_session_value(raw)
+            if session then
+                return session
+            end
+            last_err = parse_err or "invalid session value"
+        elseif err then
+            last_err = err
+        end
+    end
+
+    return nil, last_err .. " (tried keys: " .. table.concat(keys, ", ") .. ")"
 end
 
 function _M.build_upstream_url(base_url, subpath)

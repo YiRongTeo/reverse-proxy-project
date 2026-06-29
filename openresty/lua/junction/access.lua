@@ -52,11 +52,15 @@ if not session_id then
     return proxy_util.deny(ngx.HTTP_BAD_REQUEST, parse_err)
 end
 
+ngx.log(ngx.INFO, "junction session path ok session_id=", session_id,
+    " subpath=", subpath or "/", " prefix=", junction_prefix or "")
+
 local session_data, lookup_err = session_lookup.lookup(session_id)
 if not session_data then
     ngx.log(ngx.WARN, "junction session lookup failed session_id=", session_id,
         " err=", lookup_err or "")
-    return proxy_util.deny(ngx.HTTP_UNAUTHORIZED, lookup_err or "invalid session")
+    return proxy_util.deny(ngx.HTTP_UNAUTHORIZED,
+        (lookup_err or "invalid session") .. " for session_id=" .. session_id)
 end
 
 if device.validate_session and not device.validate_session(session_id, session_data) then

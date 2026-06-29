@@ -209,6 +209,7 @@ If `upstream_bytes=0`, the device returned an empty body (redirect, 304, or HEAD
 | `VALKEY_PORT` | `6379` | Valkey port |
 | `VALKEY_PASSWORD` | _(empty)_ | Valkey AUTH password |
 | `SESSION_KEY_PREFIX` | `session:` | Prefix for session keys |
+| `JUNCTION_BASE_PATH` | _(empty)_ | Strip a leading path prefix when the proxy is mounted under a subpath (example: `/proxy`) |
 
 ## Notes
 
