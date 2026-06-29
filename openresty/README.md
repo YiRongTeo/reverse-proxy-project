@@ -123,6 +123,8 @@ Rewriting uses `lua-resty-http` in `content.lua` to fetch the exact `device_upst
 | `Location: /logout` | `Location: /f5/{session_id}/logout` |
 | `{{:host_addr}}` templates | proxy host |
 
+If the page shows garbled characters, the device likely sent gzip-compressed content. `lib/gzip.lua` decompresses gzip responses before rewriting. Check logs for `upstream gzip decompressed`.
+
 Check `/var/log/nginx/error.log` for:
 
 - `junction upstream fetch uri=... target=https://device/... upstream_bytes=N` — full body received from device

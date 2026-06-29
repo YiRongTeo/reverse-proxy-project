@@ -1,3 +1,4 @@
+local gzip = require "lib.gzip"
 local http = require "resty.http"
 
 local _M = {}
@@ -16,6 +17,7 @@ local HOP_BY_HOP = {
     ["transfer-encoding"] = true,
     ["upgrade"] = true,
     ["accept-encoding"] = true,
+    ["content-encoding"] = true,
 }
 
 local function append_query(url, args)
@@ -44,8 +46,40 @@ local function normalize_headers(headers)
         end
     end
 
-    out["Accept-Encoding"] = nil
+    -- Ask upstream for plain text; decompress below if it ignores this.
+    out["Accept-Encoding"] = "identity"
     return out
+end
+
+local function get_header(headers, name)
+    if not headers then
+        return nil
+    end
+
+    return headers[name] or headers[name:lower()] or headers[name:upper()]
+end
+
+local function decode_body(body, headers)
+    local encoding = get_header(headers, "Content-Encoding")
+    if encoding then
+        encoding = encoding:lower()
+    end
+
+    if encoding == "br" or encoding == "deflate" then
+        return nil, "unsupported Content-Encoding: " .. encoding
+    end
+
+    if encoding == "gzip" or gzip.is_gzip(body) then
+        local plain, err = gzip.inflate(body)
+        if not plain then
+            return nil, err or "gzip decompression failed"
+        end
+
+        ngx.log(ngx.INFO, "upstream gzip decompressed bytes=", #body, "->", #plain)
+        return plain
+    end
+
+    return body
 end
 
 function _M.fetch(url, opts)
@@ -76,10 +110,19 @@ function _M.fetch(url, opts)
         ngx.log(ngx.WARN, "upstream keepalive failed: ", keepalive_err)
     end
 
+    local headers = res.headers or {}
+    local body, decode_err = decode_body(res.body or "", headers)
+    if not body then
+        return nil, decode_err
+    end
+
+    headers["Content-Encoding"] = nil
+    headers["content-encoding"] = nil
+
     return {
         status = res.status,
-        headers = res.headers or {},
-        body = res.body or "",
+        headers = headers,
+        body = body,
     }
 end
 
