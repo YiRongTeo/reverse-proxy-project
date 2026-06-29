@@ -56,7 +56,16 @@ function _M.new(opts)
     end
 
     function device.rewrite_body(body, junction_prefix, session_id, backend_base)
-        return html_rewrite.rewrite(body, junction_prefix, session_id, backend_base)
+        return html_rewrite.rewrite(
+            body,
+            junction_prefix,
+            session_id,
+            backend_base,
+            ngx.ctx.backend_host,
+            {
+                aggressive_absolute_rewrite = opts.aggressive_absolute_rewrite == true,
+            }
+        )
     end
 
     function device.rewrite_location(location, ctx)

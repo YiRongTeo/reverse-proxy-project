@@ -119,32 +119,124 @@ function _M.rewrite_location(location, junction_base, junction_root, backend_bas
     return location
 end
 
-local function rewrite_attribute(body, attr, junction_base, junction_root)
+local function ci_attr_pattern(attr)
+    local parts = {}
+    for i = 1, #attr do
+        local c = attr:sub(i, i)
+        parts[#parts + 1] = "[" .. c:lower() .. c:upper() .. "]"
+    end
+    return table.concat(parts)
+end
+
+function _M.rewrite_url_reference(url, junction_base, junction_root, backend_base, backend_host, aggressive)
+    if not url or url == "" then
+        return url
+    end
+
+    if url:sub(1, 1) == "/" and url:sub(1, 2) ~= "//" then
+        if _M.needs_prefix(url, junction_base) then
+            return _M.prefix_path(url, junction_base, junction_root)
+        end
+        return url
+    end
+
+    if not url:match("^https?://") then
+        return url
+    end
+
+    local rewritten = _M.rewrite_location(
+        url,
+        junction_base,
+        junction_root,
+        backend_base,
+        backend_host
+    )
+
+    if rewritten ~= url then
+        local path = rewritten:match("^https?://[^/]+(.*)$")
+        if path and path ~= "" then
+            return path
+        end
+        return rewritten
+    end
+
+    if aggressive then
+        local path = url:match("^https?://[^/]+(.*)$") or "/"
+        if path == "" then
+            path = "/"
+        end
+        if _M.needs_prefix(path, junction_base) then
+            return _M.prefix_path(path, junction_base, junction_root)
+        end
+    end
+
+    return url
+end
+
+local function rewrite_attribute(body, attr, junction_base, junction_root, backend_base, backend_host, aggressive)
+    local attr_pattern = ci_attr_pattern(attr)
     local patterns = {
-        { quote = '"', pattern = attr .. '="(/[^"]*)"' },
-        { quote = "'", pattern = attr .. "='(/[^']*)'" },
+        { quote = '"', value = '([^"]+)' },
+        { quote = "'", value = "([^']+)" },
     }
 
     for _, item in ipairs(patterns) do
-        body = body:gsub(item.pattern, function(path)
-            if not _M.needs_prefix(path, junction_base) then
-                return attr .. "=" .. item.quote .. path .. item.quote
-            end
-
-            return attr .. "=" .. item.quote .. _M.prefix_path(path, junction_base, junction_root) .. item.quote
+        local pattern = attr_pattern .. '%s*=%s*' .. item.quote .. item.value .. item.quote
+        body = body:gsub(pattern, function(value)
+            local rewritten = _M.rewrite_url_reference(
+                value,
+                junction_base,
+                junction_root,
+                backend_base,
+                backend_host,
+                aggressive
+            )
+            return attr .. "=" .. item.quote .. rewritten .. item.quote
         end)
     end
 
     return body
 end
 
-local function rewrite_quoted_root_paths(body, junction_base, junction_root)
-    return body:gsub("([\"'])(/[^\"']*)", function(quote, path)
-        if not _M.needs_prefix(path, junction_base) then
-            return quote .. path
-        end
+local function rewrite_quoted_urls(body, junction_base, junction_root, backend_base, backend_host, aggressive)
+    body = body:gsub("([\"'])(/[^\"']*)", function(quote, path)
+        local rewritten = _M.rewrite_url_reference(
+            path,
+            junction_base,
+            junction_root,
+            backend_base,
+            backend_host,
+            aggressive
+        )
+        return quote .. rewritten
+    end)
 
-        return quote .. _M.prefix_path(path, junction_base, junction_root)
+    body = body:gsub("([\"'])(https?://[^\"']*)", function(quote, url)
+        local rewritten = _M.rewrite_url_reference(
+            url,
+            junction_base,
+            junction_root,
+            backend_base,
+            backend_host,
+            aggressive
+        )
+        return quote .. rewritten
+    end)
+
+    return body
+end
+
+local function rewrite_dom_src_setters(body, junction_base, junction_root, backend_base, backend_host, aggressive)
+    return body:gsub("%.src%s*=%s*([\"'])([^\"']+)([\"'])", function(open_quote, value, close_quote)
+        local rewritten = _M.rewrite_url_reference(
+            value,
+            junction_base,
+            junction_root,
+            backend_base,
+            backend_host,
+            aggressive
+        )
+        return ".src=" .. open_quote .. rewritten .. close_quote
     end)
 end
 
@@ -165,10 +257,14 @@ local function rewrite_template_host(body, proxy_origin)
     return body
 end
 
-function _M.rewrite(body, junction_prefix, session_id, backend_base)
+function _M.rewrite(body, junction_prefix, session_id, backend_base, backend_host, opts)
     if not body or body == "" then
         return body
     end
+
+    opts = opts or {}
+    local aggressive = opts.aggressive_absolute_rewrite == true
+    backend_host = backend_host or _M.extract_host(backend_base)
 
     local junction_base, junction_root = _M.junction_paths(junction_prefix, session_id)
     local proxy_origin = _M.proxy_origin()
@@ -184,11 +280,34 @@ function _M.rewrite(body, junction_prefix, session_id, backend_base)
     for _, attr in ipairs({
         "href", "src", "action", "poster", "data-src", "data-href", "formaction",
     }) do
-        body = rewrite_attribute(body, attr, junction_base, junction_root)
+        body = rewrite_attribute(
+            body,
+            attr,
+            junction_base,
+            junction_root,
+            backend_base,
+            backend_host,
+            aggressive
+        )
     end
 
     body = rewrite_css_urls(body, junction_base, junction_root)
-    body = rewrite_quoted_root_paths(body, junction_base, junction_root)
+    body = rewrite_quoted_urls(
+        body,
+        junction_base,
+        junction_root,
+        backend_base,
+        backend_host,
+        aggressive
+    )
+    body = rewrite_dom_src_setters(
+        body,
+        junction_base,
+        junction_root,
+        backend_base,
+        backend_host,
+        aggressive
+    )
 
     return body
 end

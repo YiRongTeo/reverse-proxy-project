@@ -127,6 +127,8 @@ docker compose exec valkey valkey-cli SET 'session:ise1' \
 
 Set `host` to the ISE FQDN when the appliance issues redirects using a hostname. Redirects are followed server-side using the session IP (`url`) while `Host` is set from `host`.
 
+The ISE admin UI uses OWASP CSRFGuard (`/admin/JavaScriptServlet`). The junction rewrites the servlet's `isValidDomain(document.domain, …)` check so it accepts the proxy hostname instead of the ISE FQDN. Hard-refresh the browser if the servlet response was cached.
+
 Infoblox, ZDNS, and Cisco ISE junctions follow upstream redirects server-side and rewrite `Location` headers for the browser.
 
 **Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
