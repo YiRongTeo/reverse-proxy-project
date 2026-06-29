@@ -54,13 +54,15 @@ function _M.configure_request_headers(ctx)
     end
 
     -- Request uncompressed bodies so HTML/JS/CSS can be rewritten in body_filter.
+    -- nginx also sets proxy_set_header Accept-Encoding "" as a belt-and-braces guard.
     ngx.req.clear_header("Accept-Encoding")
+    ngx.req.set_header("Accept-Encoding", "identity")
 
     ngx.req.set_header("X-Forwarded-Ssl", "on")
 end
 
-function _M.should_rewrite_body(content_type)
-    return html_rewrite.should_rewrite_content_type(content_type)
+function _M.should_rewrite_body(content_type, uri)
+    return html_rewrite.should_rewrite_response(content_type, uri)
 end
 
 function _M.rewrite_body(body, junction_prefix, session_id, backend_base)

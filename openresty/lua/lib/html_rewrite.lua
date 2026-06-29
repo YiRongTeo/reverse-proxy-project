@@ -160,6 +160,34 @@ function _M.should_rewrite_content_type(content_type)
         or ct:find("application/x%-javascript", 1, true)
         or ct:find("text/css", 1, true)
         or ct:find("application/json", 1, true)
+        or ct:find("text/plain", 1, true)
+end
+
+local HTML_LIKE_EXTENSIONS = {
+    html = true,
+    htm = true,
+    php = true,
+    asp = true,
+    aspx = true,
+    jsp = true,
+}
+
+function _M.should_rewrite_response(content_type, uri)
+    if _M.should_rewrite_content_type(content_type) then
+        return true
+    end
+
+    if content_type and content_type ~= "" then
+        return false
+    end
+
+    uri = uri or ""
+    local extension = uri:match("%.([^./?]+)$")
+    if not extension then
+        return true
+    end
+
+    return HTML_LIKE_EXTENSIONS[extension:lower()] == true
 end
 
 return _M

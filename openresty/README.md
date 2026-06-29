@@ -120,7 +120,14 @@ Device GUIs often emit root-absolute paths (`<base href="/">`, `src="/.../runtim
 | `Location: /logout` | `Location: /f5/{session_id}/logout` |
 | `{{:host_addr}}` templates | proxy host |
 
-Rewriting applies to `text/html`, JavaScript, CSS, and JSON responses. `Accept-Encoding` is cleared on upstream requests so bodies are not gzip-compressed before rewrite.
+Rewriting applies to `text/html`, JavaScript, CSS, and JSON responses. Compression is disabled for rewriting to work:
+
+- `proxy_set_header Accept-Encoding ""` — asks upstream for plain text
+- `gunzip on` — decompresses gzip if the device ignores that and compresses anyway
+- `proxy_buffering on` — required so `body_filter` can buffer and rewrite the full body
+- `gzip off` — prevents nginx from re-compressing the rewritten response
+
+Check `/var/log/nginx/error.log` for `junction rewrite enabled` or `junction rewrite skipped` messages.
 
 ## Environment variables
 

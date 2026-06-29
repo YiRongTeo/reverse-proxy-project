@@ -30,6 +30,7 @@ end
 local body = table.concat(ngx.ctx.body_buffer)
 ngx.ctx.body_buffer = nil
 
+local before_len = #body
 local rewriter = device.rewrite_body or html_rewrite.rewrite
 body = rewriter(
     body,
@@ -37,5 +38,10 @@ body = rewriter(
     ngx.ctx.session_id,
     ngx.ctx.backend_base
 )
+
+if before_len > 0 then
+    ngx.log(ngx.INFO, "junction rewrite applied uri=", ngx.var.uri or "",
+        " bytes=", before_len, "->", #body)
+end
 
 ngx.arg[1] = body

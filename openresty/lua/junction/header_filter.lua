@@ -31,29 +31,43 @@ if device.on_response_headers then
 end
 
 local content_type = ngx.header["Content-Type"]
-local should_rewrite = false
+local should_rewrite = html_rewrite.should_rewrite_response(content_type, ngx.var.uri)
 
 if device.should_rewrite_body then
-    should_rewrite = device.should_rewrite_body(content_type)
-elseif html_rewrite.should_rewrite_content_type(content_type) then
-    should_rewrite = true
+    should_rewrite = device.should_rewrite_body(content_type, ngx.var.uri)
 end
 
-if ngx.header["Content-Encoding"] and ngx.header["Content-Encoding"] ~= "identity" then
-    should_rewrite = false
-    ngx.log(ngx.WARN, "skipping body rewrite for encoded response: ", ngx.header["Content-Encoding"])
+local content_encoding = ngx.header["Content-Encoding"]
+if content_encoding and content_encoding ~= "" and content_encoding ~= "identity" then
+    if content_encoding == "gzip" then
+        -- gunzip in nginx.conf decompresses before body_filter; drop header so
+        -- the client does not try to inflate already-plain rewritten content.
+        ngx.header["Content-Encoding"] = nil
+        ngx.log(ngx.INFO, "junction rewrite: gunzip will decode upstream body (",
+            ngx.var.uri, ")")
+    else
+        should_rewrite = false
+        ngx.log(ngx.WARN, "junction rewrite skipped: unsupported Content-Encoding=",
+            content_encoding, " uri=", ngx.var.uri)
+    end
 end
 
 if should_rewrite then
     ngx.ctx.rewrite_body = true
     ngx.header["Content-Length"] = nil
+    ngx.header.content_length = nil
+    ngx.log(ngx.INFO, "junction rewrite enabled for ", ngx.var.uri,
+        " content-type=", content_type or "(none)")
+else
+    ngx.log(ngx.DEBUG, "junction rewrite disabled for ", ngx.var.uri,
+        " content-type=", content_type or "(none)")
 end
 
 local location = ngx.header["Location"]
 if location and ngx.ctx.session_id and ctx.junction_prefix then
     local junction_base, junction_root = html_rewrite.junction_paths(
         ctx.junction_prefix,
-        ngx.ctx.session_id
+        ngx.var.session_id
     )
 
     local rewritten = html_rewrite.rewrite_location(
