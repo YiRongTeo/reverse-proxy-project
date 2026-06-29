@@ -125,6 +125,8 @@ Rewriting uses `lua-resty-http` in `content.lua` to fetch the exact `device_upst
 
 If the page shows garbled characters, the device likely sent a compressed response. `lib/gzip.lua` decompresses gzip and deflate bodies before rewriting. Upstream connections use `keepalive=false` to avoid pool errors with HTTPS device GUIs.
 
+If you see `junction rewrite skipped: empty upstream body status=304`, the browser sent cache validators (`If-None-Match` / `If-Modified-Since`). The proxy now strips those headers and retries to force a full response body.
+
 Check `/var/log/nginx/error.log` for:
 
 - `junction upstream fetch uri=... target=https://device/... upstream_bytes=N` — full body received from device
