@@ -77,6 +77,20 @@ Value (JSON, recommended):
 {"url":"https://10.10.10.10","device_type":"f5_bigip","host":"10.10.10.10"}
 ```
 
+Store JSON as a plain string value (not double-encoded). With `valkey-cli`, use single quotes around the JSON:
+
+```bash
+docker compose exec valkey valkey-cli SET 'session:ise1' '{"url":"https://10.10.10.30/admin/","device_type":"cisco_ise_tacacs","host":"ise.corp.local"}'
+```
+
+Verify parsing:
+
+```bash
+docker compose exec valkey valkey-cli GET 'session:ise1'
+```
+
+The proxy reads the `url` field for upstream targeting and `host` for the HTTP `Host` header.
+
 Seed an example session:
 
 ```bash
