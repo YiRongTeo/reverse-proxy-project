@@ -12,6 +12,23 @@ local function trim(raw)
     return raw:match("^%s*(.-)%s*$")
 end
 
+local function strip_wrapping_quotes(raw)
+    raw = trim(raw)
+    if not raw or raw == "" then
+        return raw
+    end
+
+    if raw:sub(1, 1) == '"' and raw:sub(-1) == '"' then
+        return raw:sub(2, -2)
+    end
+
+    if raw:sub(1, 1) == "'" and raw:sub(-1) == "'" then
+        return raw:sub(2, -2)
+    end
+
+    return raw
+end
+
 local function extract_json_fields(raw)
     if not raw or raw == "" then
         return nil
@@ -47,7 +64,7 @@ local function normalize_session_table(decoded)
         return nil
     end
 
-    if url:find("^%s*{", 1) then
+    if url:find("{", 1, true) then
         return nil
     end
 
@@ -55,21 +72,38 @@ local function normalize_session_table(decoded)
     return decoded
 end
 
+local function plain_url_session(raw)
+    raw = strip_wrapping_quotes(raw)
+    if not raw or raw == "" then
+        return nil
+    end
+
+    if raw:match("^https?://") then
+        return { url = raw }
+    end
+
+    if raw:match("^[%d%.]+$") or raw:match("^[%w%.%-]+$") then
+        return { url = "https://" .. raw }
+    end
+
+    return nil
+end
+
 local function parse_session_value(raw)
     if not raw or raw == "" then
         return nil, "empty session value"
     end
 
-    raw = trim(raw)
+    raw = strip_wrapping_quotes(raw)
 
     local decoded, decode_err = json.decode(raw)
 
     if type(decoded) == "string" then
-        local nested, nested_err = json.decode(decoded)
+        local nested = json.decode(decoded)
         if type(nested) == "table" then
             decoded = nested
-        elseif nested_err then
-            decode_err = nested_err
+        elseif decoded:match("^https?://") then
+            return { url = decoded }
         end
     end
 
@@ -80,21 +114,24 @@ local function parse_session_value(raw)
 
     session = extract_json_fields(raw)
     if session then
-        ngx.log(ngx.WARN, "session json decode failed, extracted fields from value: ",
-            decode_err or "value was not a session object")
+        if decode_err then
+            ngx.log(ngx.WARN, "session json decode failed, extracted fields from value: ", decode_err)
+        end
         return session
     end
 
+    if not raw:find("{", 1, true) then
+        session = plain_url_session(raw)
+        if session then
+            return session
+        end
+    end
+
     if decode_err then
-        ngx.log(ngx.WARN, "session value is not valid json, treating as plain url: ",
-            decode_err, " value=", raw:sub(1, 120))
+        ngx.log(ngx.WARN, "session value parse failed: ", decode_err, " value=", raw:sub(1, 120))
     elseif raw:find("{", 1, true) then
         ngx.log(ngx.WARN, "session value looks like json but no url field was found: ",
             raw:sub(1, 120))
-    end
-
-    if raw:match("^https?://") then
-        return { url = raw }
     end
 
     return nil, "invalid session value"

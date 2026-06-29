@@ -19,11 +19,15 @@ end
 
 local session_id, subpath, parse_err = junction_session.extract_from_uri(junction_prefix)
 if not session_id then
+    ngx.log(ngx.WARN, "junction invalid session path uri=", ngx.var.uri or "",
+        " prefix=", junction_prefix or "", " err=", parse_err or "")
     return proxy_util.deny(ngx.HTTP_BAD_REQUEST, parse_err)
 end
 
 local session_data, lookup_err = junction_session.lookup(session_id)
 if not session_data then
+    ngx.log(ngx.WARN, "junction session lookup failed session_id=", session_id,
+        " err=", lookup_err or "")
     return proxy_util.deny(ngx.HTTP_UNAUTHORIZED, lookup_err or "invalid session")
 end
 
