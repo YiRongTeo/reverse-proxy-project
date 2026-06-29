@@ -287,10 +287,13 @@ function _M.extract_from_uri(prefix)
     end
 
     for _, try_prefix in ipairs(candidates) do
-        local pattern = "^" .. escape_pattern(try_prefix) .. "/([^/]+)(/.*)?$"
+        -- Lua patterns have no ? optional quantifier; capture the rest with (.*)$
+        local pattern = "^" .. escape_pattern(try_prefix) .. "/([^/]+)(.*)$"
         local session_id, subpath = uri:match(pattern)
         if session_id then
-            subpath = subpath or "/"
+            if not subpath or subpath == "" then
+                subpath = "/"
+            end
             return session_id, subpath, nil, try_prefix
         end
     end
