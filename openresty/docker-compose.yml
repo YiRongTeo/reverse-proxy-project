@@ -1,0 +1,17 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+
+  openresty:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      VALKEY_HOST: valkey
+      VALKEY_PORT: "6379"
+      SESSION_KEY_PREFIX: "session:"
+    depends_on:
+      - valkey
