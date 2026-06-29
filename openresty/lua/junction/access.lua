@@ -1,5 +1,6 @@
 local cors = require "lib.cors"
 local device_registry = require "lib.device_registry"
+local html_rewrite = require "lib.html_rewrite"
 local proxy_util = require "lib.proxy_util"
 local junction_session = require "lib.junction_session"
 
@@ -67,6 +68,8 @@ end
 ngx.ctx.junction_device = device_name
 ngx.ctx.junction_prefix = junction_prefix
 ngx.ctx.session_id = session_id
-ngx.ctx.backend_base = session_data.url:gsub("/+$", "")
-ngx.ctx.backend_host = session_data.host or session_data.url:match("^https?://([^:/]+)")
+ngx.ctx.backend_base = html_rewrite.normalize_origin(session_data.url:gsub("/+$", ""))
+ngx.ctx.backend_host = session_data.host
+    or html_rewrite.extract_host(session_data.url)
+    or session_data.url:match("^https?://([^:/]+)")
 ngx.var.session_id = session_id

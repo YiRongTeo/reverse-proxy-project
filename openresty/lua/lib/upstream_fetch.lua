@@ -192,8 +192,34 @@ local function cookie_header(jar)
     return table.concat(parts, "; ")
 end
 
-local function resolve_redirect_url(base_url, location)
+local function normalize_origin(url)
+    if not url or url == "" then
+        return ""
+    end
+
+    url = url:gsub("/+$", "")
+    url = url:gsub("^https://([^:/]+):443", "https://%1")
+    url = url:gsub("^http://([^:/]+):80", "http://%1")
+    return url
+end
+
+local function redirect_path_key(url)
+    local path = url:match("^https?://[^/]+(.*)$") or url
+    if path == "" then
+        path = "/"
+    end
+    return path
+end
+
+local function resolve_redirect_url(base_url, location, session_origin)
     if location:match("^https?://") then
+        if session_origin and session_origin ~= "" then
+            local path = location:match("^https?://[^/]+(.*)$") or "/"
+            if path == "" then
+                path = "/"
+            end
+            return normalize_origin(session_origin) .. path
+        end
         return location
     end
 
@@ -209,6 +235,15 @@ local function resolve_redirect_url(base_url, location)
 
     local base_dir = path:match("^(.*/)[^/]*$") or "/"
     return origin .. base_dir .. location
+end
+
+local function should_follow_redirect(method, status)
+    if method == "GET" then
+        return true
+    end
+
+    -- Login forms and similar POST flows often end in a 302/303 to a GET page.
+    return method == "POST" and (status == 302 or status == 303)
 end
 
 local function do_request(url, method, headers, body, timeout)
@@ -233,7 +268,7 @@ function _M.fetch(url, opts)
 
     local method = opts.method or "GET"
     local max_redirects = 0
-    if opts.follow_redirects and method == "GET" then
+    if opts.follow_redirects then
         max_redirects = opts.max_redirects or 5
     end
 
@@ -242,8 +277,18 @@ function _M.fetch(url, opts)
     local cookie_jar = {}
     local body = opts.body
     local res
+    local visited = {}
+    local session_origin = opts.redirect_origin
 
     for hop = 0, max_redirects do
+        local visit_key = session_origin and redirect_path_key(current_url) or current_url
+        if visited[visit_key] then
+            ngx.log(ngx.WARN, "upstream redirect loop at ", current_url,
+                " key=", visit_key)
+            break
+        end
+        visited[visit_key] = true
+
         local headers = {}
         for key, value in pairs(base_headers) do
             headers[key] = value
@@ -263,10 +308,13 @@ function _M.fetch(url, opts)
         merge_set_cookie(cookie_jar, res.headers or {})
 
         local location = get_header(res.headers, "Location")
-        if hop < max_redirects and REDIRECT_STATUSES[res.status] and location then
-            current_url = resolve_redirect_url(current_url, location)
+        if hop < max_redirects
+            and REDIRECT_STATUSES[res.status]
+            and location
+            and should_follow_redirect(method, res.status) then
+            current_url = resolve_redirect_url(current_url, location, session_origin)
             ngx.log(ngx.INFO, "upstream redirect hop=", hop + 1, " status=", res.status,
-                " -> ", current_url)
+                " location=", location, " -> ", current_url)
             method = "GET"
             body = nil
         else

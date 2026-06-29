@@ -38,6 +38,7 @@ openresty/
     │   ├── junction_session.lua
     │   ├── cors.lua
     │   ├── proxy_util.lua
+    │   ├── junction_device.lua
     │   └── device_registry.lua
     └── devices/
         ├── f5_bigip.lua
@@ -90,32 +91,51 @@ docker compose up --build
 curl http://localhost:8080/healthz
 ```
 
+## Device junctions
+
+| Device | Junction path | `device_type` | Module |
+|--------|---------------|---------------|--------|
+| F5 BIG-IP | `/f5/{session_id}/` | `f5_bigip` | `devices/f5_bigip.lua` |
+| Infoblox NIOS | `/infoblox/{session_id}/` | `infoblox` | `devices/infoblox.lua` |
+| ZDNS | `/zdns/{session_id}/` | `zdns` | `devices/zdns.lua` |
+| Cisco ISE (TACACS) | `/ise/{session_id}/` | `cisco_ise_tacacs` | `devices/cisco_ise_tacacs.lua` |
+
 Proxy examples (after seeding a session):
 
 ```bash
-# F5 BIG-IP
 curl -I "http://localhost:8080/f5/abc123/"
-
-# Infoblox NIOS
 curl -I "http://localhost:8080/infoblox/abc123/"
+curl -I "http://localhost:8080/zdns/abc123/"
+curl -I "http://localhost:8080/ise/abc123/"
 ```
 
-### Infoblox session example
+### Session examples
 
 ```bash
-docker compose exec valkey valkey-cli SET 'session:abc123' \
+# Infoblox NIOS
+docker compose exec valkey valkey-cli SET 'session:infoblox1' \
   '{"url":"https://10.10.10.10","device_type":"infoblox","host":"10.10.10.10"}'
+
+# ZDNS
+docker compose exec valkey valkey-cli SET 'session:zdns1' \
+  '{"url":"https://10.10.10.20","device_type":"zdns","host":"10.10.10.20"}'
+
+# Cisco ISE TACACS admin
+docker compose exec valkey valkey-cli SET 'session:ise1' \
+  '{"url":"https://10.10.10.30/admin/","device_type":"cisco_ise_tacacs","host":"ise.corp.local"}'
 ```
 
-Then open `http://localhost:8080/infoblox/abc123/` in a browser. Infoblox typically responds with a 302 to `/wui/` on first access; the junction follows that redirect server-side and rewrites `Location` headers that reach the browser.
+Set `host` to the ISE FQDN when the appliance issues redirects using a hostname. Redirects are followed server-side using the session IP (`url`) while `Host` is set from `host`.
+
+Infoblox, ZDNS, and Cisco ISE junctions follow upstream redirects server-side and rewrite `Location` headers for the browser.
 
 **Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
 
 ## Add a new device junction
 
-1. Copy `lua/devices/_template.lua` to `lua/devices/<name>.lua`
-2. Register it in `lua/lib/device_registry.lua`
-3. Add a location block in `nginx/conf/junctions.conf`:
+1. Copy `lua/devices/_template.lua` to `lua/devices/<name>.lua` (or use `lib.junction_device.new()`)
+2. Add a location block in `nginx/conf/junctions.conf`
+3. Preload the module in `nginx/nginx.conf` `init_by_lua_block`
 
 ```nginx
 location /mydevice/ {

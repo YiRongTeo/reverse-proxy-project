@@ -15,7 +15,7 @@ function _M.new(opts)
         name = opts.name,
         junction_prefix = opts.junction_prefix,
         follow_redirects = opts.follow_redirects ~= false,
-        max_redirects = opts.max_redirects or 5,
+        max_redirects = opts.max_redirects or 10,
         cors = {
             allow_credentials = true,
             allow_private_network = opts.allow_private_network ~= false,
@@ -65,13 +65,30 @@ function _M.new(opts)
             ctx.session_id
         )
 
-        return html_rewrite.rewrite_location(
+        local rewritten = html_rewrite.rewrite_location(
             location,
             junction_base,
             junction_root,
             ctx.backend_base,
             ctx.backend_host
         )
+
+        if rewritten ~= location then
+            return rewritten
+        end
+
+        -- Devices such as Cisco ISE redirect to https://<fqdn>/admin/... while the
+        -- session is stored as https://<ip>/... — rewrite the path under the junction.
+        if location:match("^https?://") then
+            local path = location:match("^https?://[^/]+(.*)$") or "/"
+            if path == "" then
+                path = "/"
+            end
+            return html_rewrite.proxy_origin()
+                .. html_rewrite.prefix_path(path, junction_base, junction_root)
+        end
+
+        return location
     end
 
     function device.on_response_headers(ctx)

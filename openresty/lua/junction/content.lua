@@ -19,14 +19,21 @@ if method == "POST" or method == "PUT" or method == "PATCH" or method == "DELETE
     ngx.req.read_body()
 end
 
+local upstream_headers = ngx.req.get_headers()
+if ngx.ctx.backend_host then
+    upstream_headers["Host"] = ngx.ctx.backend_host
+end
+upstream_headers["Accept-Encoding"] = "identity"
+
 local res, fetch_err = upstream_fetch.fetch(target_url, {
     method = method,
     args = ngx.var.args,
     uri = ngx.var.uri,
-    headers = ngx.req.get_headers(),
+    headers = upstream_headers,
     body = ngx.req.get_body_data(),
     follow_redirects = device.follow_redirects,
     max_redirects = device.max_redirects,
+    redirect_origin = ngx.ctx.backend_base,
 })
 
 if not res then
