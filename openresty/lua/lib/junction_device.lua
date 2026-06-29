@@ -122,12 +122,43 @@ function _M.new(opts)
                 ctx.session_id
             )
 
+            refresh = refresh:gsub("url=(https?://[^%s;]+)", function(url)
+                local rewritten = html_rewrite.rewrite_location(
+                    url,
+                    junction_base,
+                    junction_root,
+                    ctx.backend_base,
+                    ctx.backend_host
+                )
+                if rewritten ~= url then
+                    return "url=" .. rewritten
+                end
+                local path = url:match("^https?://[^/]+(.*)$") or "/"
+                if path == "" then
+                    path = "/"
+                end
+                return "url=" .. html_rewrite.proxy_origin()
+                    .. html_rewrite.prefix_path(path, junction_base, junction_root)
+            end)
+
             ngx.header["Refresh"] = refresh:gsub("url=(/[^%s;]+)", function(path)
                 if html_rewrite.needs_prefix(path, junction_base) then
                     return "url=" .. html_rewrite.prefix_path(path, junction_base, junction_root)
                 end
                 return "url=" .. path
             end)
+        end
+    end
+
+    if opts.default_subpath then
+        local junction_session = require "lib.junction_session"
+
+        function device.resolve_upstream_url(base_url, subpath)
+            if not subpath or subpath == "" or subpath == "/" then
+                subpath = opts.default_subpath
+            end
+
+            return junction_session.build_upstream_url(base_url, subpath)
         end
     end
 

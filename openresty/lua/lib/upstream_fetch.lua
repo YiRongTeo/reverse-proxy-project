@@ -208,7 +208,18 @@ local function redirect_path_key(url)
     if path == "" then
         path = "/"
     end
-    return path
+
+    local path_only = path:match("^([^?]*)") or path
+    if path_only ~= "/" and path_only:sub(-1) == "/" then
+        path_only = path_only:sub(1, -2)
+    end
+
+    local query = path:match("%?(.*)$")
+    if query then
+        return path_only .. "?" .. query
+    end
+
+    return path_only
 end
 
 local function resolve_redirect_url(base_url, location, session_origin)

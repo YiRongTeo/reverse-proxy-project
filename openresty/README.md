@@ -149,7 +149,14 @@ The ISE admin UI uses OWASP CSRFGuard (`/admin/JavaScriptServlet`). The junction
 
 Infoblox, ZDNS, Cisco ISE, and F5 junctions follow upstream redirects server-side and rewrite `Location` headers for the browser.
 
-**F5 tip:** TMUI lives under `/tmui/`. A typical first request is `/f5/{session_id}/tmui/login.jsp`. Set `host` to the F5 management hostname when the session `url` uses an IP address.
+**F5 tip:** TMUI lives under `/tmui/`. Visiting `/f5/{session_id}/` automatically opens `/tmui/login.jsp` on the F5. Set `host` to the F5 management hostname when the session `url` uses an IP address.
+
+```bash
+docker compose exec valkey valkey-cli SET 'session:f5lb1' \
+  '{"url":"https://10.10.10.10","device_type":"f5_load_balancer","host":"bigip.corp.local"}'
+```
+
+Then open `http://localhost:8080/f5/f5lb1/` (redirects are followed server-side).
 
 **Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
 

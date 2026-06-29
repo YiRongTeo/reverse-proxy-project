@@ -44,7 +44,12 @@ if device.validate_session and not device.validate_session(session_id, session_d
     return proxy_util.deny(ngx.HTTP_FORBIDDEN, "session not allowed for this junction")
 end
 
-local target_url, build_err = session_lookup.build_upstream_url(session_data.url, subpath)
+local target_url, build_err
+if device.resolve_upstream_url then
+    target_url, build_err = device.resolve_upstream_url(session_data.url, subpath)
+else
+    target_url, build_err = session_lookup.build_upstream_url(session_data.url, subpath)
+end
 if not target_url then
     return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, build_err)
 end
@@ -81,7 +86,10 @@ end
 ngx.ctx.junction_device = device_name
 ngx.ctx.junction_prefix = junction_prefix
 ngx.ctx.session_id = session_id
-ngx.ctx.backend_base = html_rewrite.normalize_origin(session_data.url:gsub("/+$", ""))
+ngx.ctx.backend_base = html_rewrite.backend_origin(
+    session_data.url:gsub("/+$", ""),
+    session_data.host or html_rewrite.extract_host(session_data.url)
+)
 ngx.ctx.backend_host = session_data.host
     or html_rewrite.extract_host(session_data.url)
     or session_data.url:match("^https?://([^:/]+)")

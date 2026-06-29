@@ -6,11 +6,12 @@
 
   Valkey value examples:
     "https://10.10.10.10"
-    {"url":"https://10.10.10.10:443","device_type":"f5_bigip","host":"10.10.10.10"}
     {"url":"https://10.10.10.10","device_type":"f5_load_balancer","host":"bigip.corp.local"}
+    {"url":"https://10.10.10.10/tmui/login.jsp","device_type":"f5_bigip","host":"bigip.corp.local"}
 
   device_type may be "f5_bigip" or "f5_load_balancer".
   Set host to the F5 management hostname when connecting by IP.
+  Visiting /f5/{session_id}/ defaults to /tmui/login.jsp on the F5.
 ]]
 
 local html_rewrite = require "lib.html_rewrite"
@@ -25,6 +26,7 @@ local device = junction_device.new({
     name = "f5_bigip",
     junction_prefix = "/f5",
     max_redirects = 10,
+    default_subpath = "/tmui/login.jsp",
     aggressive_absolute_rewrite = true,
     cors_allow_headers = {
         "Authorization",
