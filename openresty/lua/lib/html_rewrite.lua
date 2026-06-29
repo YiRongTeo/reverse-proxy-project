@@ -43,6 +43,82 @@ function _M.proxy_origin()
     return scheme .. "://" .. host
 end
 
+function _M.backend_origin(backend_base, backend_host)
+    if backend_host and backend_host ~= "" then
+        local scheme = "https"
+        if backend_base and backend_base ~= "" then
+            scheme = backend_base:match("^(https?)://") or scheme
+        end
+        return scheme .. "://" .. backend_host
+    end
+
+    local origin = _M.normalize_origin(backend_base or "")
+    return origin:match("^(https?://[^/]+)") or origin
+end
+
+function _M.junction_to_backend_url(url, junction_prefix, session_id, backend_base, backend_host)
+    if not url or url == "" then
+        return url
+    end
+
+    local junction_base = junction_prefix .. "/" .. session_id
+    local backend_origin = _M.backend_origin(backend_base, backend_host)
+    if backend_origin == "" then
+        return url
+    end
+
+    local proxy_origin = _M.proxy_origin()
+    local proxy_scheme_host = proxy_origin:match("^(https?://[^/]+)")
+
+    if url:match("^https?://") then
+        local origin = url:match("^(https?://[^/]+)")
+        local path = url:match("^https?://[^/]+(.*)$") or "/"
+        if path == "" then
+            path = "/"
+        end
+
+        if origin == proxy_scheme_host and path:sub(1, #junction_base) == junction_base then
+            local subpath = path:sub(#junction_base + 1)
+            if subpath == "" then
+                subpath = "/"
+            end
+            return backend_origin .. subpath
+        end
+
+        return url
+    end
+
+    if url:sub(1, #junction_base) == junction_base then
+        local subpath = url:sub(#junction_base + 1)
+        if subpath == "" then
+            subpath = "/"
+        end
+        return backend_origin .. subpath
+    end
+
+    return url
+end
+
+function _M.junction_to_backend_origin(url, backend_base, backend_host)
+    if not url or url == "" then
+        return url
+    end
+
+    local backend_origin = _M.backend_origin(backend_base, backend_host)
+    if backend_origin == "" then
+        return url
+    end
+
+    local proxy_origin = _M.proxy_origin()
+    local request_origin = url:match("^(https?://[^/]+)")
+    local proxy_scheme_host = proxy_origin:match("^(https?://[^/]+)")
+    if request_origin == proxy_scheme_host then
+        return backend_origin
+    end
+
+    return url
+end
+
 function _M.normalize_origin(url)
     if not url or url == "" then
         return ""

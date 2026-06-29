@@ -19,11 +19,27 @@ if method == "POST" or method == "PUT" or method == "PATCH" or method == "DELETE
     ngx.req.read_body()
 end
 
+local ctx = {
+    session_id = ngx.ctx.session_id,
+    junction_prefix = ngx.ctx.junction_prefix or device.junction_prefix,
+    backend_base = ngx.ctx.backend_base,
+    backend_host = ngx.ctx.backend_host,
+}
+
 local upstream_headers = ngx.req.get_headers()
 if ngx.ctx.backend_host then
     upstream_headers["Host"] = ngx.ctx.backend_host
 end
 upstream_headers["Accept-Encoding"] = "identity"
+
+if device.prepare_upstream_headers then
+    device.prepare_upstream_headers(upstream_headers, ctx)
+end
+
+local follow_redirects = device.follow_redirects
+if device.should_follow_redirects then
+    follow_redirects = device.should_follow_redirects(ngx.var.uri, method, follow_redirects)
+end
 
 local res, fetch_err = upstream_fetch.fetch(target_url, {
     method = method,
@@ -31,7 +47,7 @@ local res, fetch_err = upstream_fetch.fetch(target_url, {
     uri = ngx.var.uri,
     headers = upstream_headers,
     body = ngx.req.get_body_data(),
-    follow_redirects = device.follow_redirects,
+    follow_redirects = follow_redirects,
     max_redirects = device.max_redirects,
     redirect_origin = ngx.ctx.backend_base,
 })
@@ -45,13 +61,6 @@ end
 local body = res.body or ""
 ngx.log(ngx.INFO, "junction upstream fetch uri=", ngx.var.uri or "",
     " target=", target_url, " status=", res.status, " upstream_bytes=", #body)
-
-local ctx = {
-    session_id = ngx.ctx.session_id,
-    junction_prefix = ngx.ctx.junction_prefix or device.junction_prefix,
-    backend_base = ngx.ctx.backend_base,
-    backend_host = ngx.ctx.backend_host,
-}
 
 local junction_base, junction_root = html_rewrite.junction_paths(
     ctx.junction_prefix,
@@ -129,6 +138,10 @@ elseif should_rewrite and #body == 0 then
     ngx.log(ngx.WARN, "junction rewrite skipped: empty upstream body uri=",
         ngx.var.uri or "", " status=", res.status,
         " content-type=", content_type or "(none)")
+end
+
+if device.finalize_response_headers then
+    device.finalize_response_headers(ctx, body, res)
 end
 
 if body and #body > 0 then
