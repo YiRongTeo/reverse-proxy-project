@@ -34,7 +34,7 @@ openresty/
     │   └── header_filter.lua           # response header / CORS handling
     ├── lib/
     │   ├── valkey.lua
-    │   ├── session.lua
+    │   ├── junction_session.lua
     │   ├── cors.lua
     │   ├── proxy_util.lua
     │   └── device_registry.lua

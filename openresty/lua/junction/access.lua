@@ -1,7 +1,7 @@
 local cors = require "lib.cors"
 local device_registry = require "lib.device_registry"
 local proxy_util = require "lib.proxy_util"
-local session = require "lib.session"
+local junction_session = require "lib.junction_session"
 
 local device_name = ngx.var.junction_device
 local junction_prefix = ngx.var.junction_prefix
@@ -16,12 +16,12 @@ if cors.handle_preflight(cors_opts) then
     return
 end
 
-local session_id, subpath, parse_err = session.extract_from_uri(junction_prefix)
+local session_id, subpath, parse_err = junction_session.extract_from_uri(junction_prefix)
 if not session_id then
     return proxy_util.deny(ngx.HTTP_BAD_REQUEST, parse_err)
 end
 
-local session_data, lookup_err = session.lookup(session_id)
+local session_data, lookup_err = junction_session.lookup(session_id)
 if not session_data then
     return proxy_util.deny(ngx.HTTP_UNAUTHORIZED, lookup_err or "invalid session")
 end
@@ -30,7 +30,7 @@ if device.validate_session and not device.validate_session(session_id, session_d
     return proxy_util.deny(ngx.HTTP_FORBIDDEN, "session not allowed for this junction")
 end
 
-local target_url, build_err = session.build_upstream_url(session_data.url, subpath)
+local target_url, build_err = junction_session.build_upstream_url(session_data.url, subpath)
 if not target_url then
     return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, build_err)
 end

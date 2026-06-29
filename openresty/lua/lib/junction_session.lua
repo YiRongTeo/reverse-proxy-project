@@ -1,4 +1,4 @@
-local cjson = require "cjson.safe"
+local json = require "lib.json"
 local valkey = require "lib.valkey"
 
 local _M = {}
@@ -10,7 +10,7 @@ local function parse_session_value(raw)
         return nil, "empty session value"
     end
 
-    local decoded = cjson.decode(raw)
+    local decoded = json.decode(raw)
     if type(decoded) == "table" and decoded.url then
         return decoded
     end

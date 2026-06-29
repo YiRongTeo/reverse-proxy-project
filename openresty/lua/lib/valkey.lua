@@ -1,4 +1,19 @@
-local redis = require "resty.redis"
+local redis
+
+local function load_redis()
+    if redis then
+        return redis
+    end
+
+    local ok, mod = pcall(require, "resty.redis")
+    if not ok then
+        return nil, "failed to load resty.redis: " .. tostring(mod)
+            .. " (ensure lua_package_path includes OpenResty lualib)"
+    end
+
+    redis = mod
+    return redis
+end
 
 local _M = {}
 
@@ -9,12 +24,17 @@ local DEFAULT_POOL_SIZE = tonumber(os.getenv("VALKEY_POOL_SIZE")) or 100
 local DEFAULT_POOL_IDLE = tonumber(os.getenv("VALKEY_POOL_IDLE_MS")) or 10000
 
 local function connect()
-    local red = redis:new()
+    local redis_mod, err = load_redis()
+    if not redis_mod then
+        return nil, err
+    end
+
+    local red = redis_mod:new()
     red:set_timeout(DEFAULT_TIMEOUT)
 
-    local ok, err = red:connect(DEFAULT_HOST, DEFAULT_PORT)
+    local ok, connect_err = red:connect(DEFAULT_HOST, DEFAULT_PORT)
     if not ok then
-        return nil, "valkey connect failed: " .. (err or "unknown")
+        return nil, "valkey connect failed: " .. (connect_err or "unknown")
     end
 
     local password = os.getenv("VALKEY_PASSWORD")
