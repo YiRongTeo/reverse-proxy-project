@@ -1,0 +1,124 @@
+# OpenResty + Valkey Device GUI Junction Proxy
+
+Reverse proxy junctions route browser traffic to network device GUIs. Each device type gets its own junction path and Lua module; session-to-backend mappings are stored in Valkey.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser -->|"/f5/{session_id}/..."| OpenResty
+    OpenResty -->|GET session:{id}| Valkey
+    Valkey -->|device GUI URL| OpenResty
+    OpenResty -->|proxy| DeviceGUI[F5 / other device GUI]
+```
+
+- **Junction**: one URI prefix per device family (example: `/f5/`)
+- **Session key**: Valkey key `session:{session_id}` → backend URL
+- **Device Lua module**: CORS, headers, cookies, and other device-specific behavior
+
+## Layout
+
+```
+openresty/
+├── Dockerfile
+├── docker-compose.yml
+├── nginx/
+│   ├── nginx.conf
+│   └── conf/
+│       ├── junctions.conf              # one location block per device
+│       └── snippets/
+│           └── junction-proxy.conf     # shared proxy + Lua hooks
+└── lua/
+    ├── junction/
+    │   ├── access.lua                  # session lookup + upstream selection
+    │   └── header_filter.lua           # response header / CORS handling
+    ├── lib/
+    │   ├── valkey.lua
+    │   ├── session.lua
+    │   ├── cors.lua
+    │   ├── proxy_util.lua
+    │   └── device_registry.lua
+    └── devices/
+        ├── f5_bigip.lua
+        └── _template.lua
+```
+
+## Request flow
+
+1. Client requests `GET /f5/abc123/tmui/login.jsp`
+2. `access.lua` loads the device module from `junction_device`
+3. Session ID `abc123` is read from the path
+4. Valkey key `session:abc123` returns `https://10.10.10.10`
+5. Request is proxied to `https://10.10.10.10/tmui/login.jsp`
+6. `header_filter.lua` applies junction CORS and device-specific response fixes
+
+## Valkey session format
+
+Key:
+
+```text
+session:{session_id}
+```
+
+Value (plain URL):
+
+```text
+https://10.10.10.10
+```
+
+Value (JSON, recommended):
+
+```json
+{"url":"https://10.10.10.10","device_type":"f5_bigip","host":"10.10.10.10"}
+```
+
+Seed an example session:
+
+```bash
+docker compose exec valkey valkey-cli SET 'session:abc123' 'https://10.10.10.10'
+```
+
+## Run locally
+
+```bash
+cd openresty
+docker compose up --build
+curl http://localhost:8080/healthz
+```
+
+Proxy example (after seeding a session):
+
+```bash
+curl -I "http://localhost:8080/f5/abc123/"
+```
+
+## Add a new device junction
+
+1. Copy `lua/devices/_template.lua` to `lua/devices/<name>.lua`
+2. Register it in `lua/lib/device_registry.lua`
+3. Add a location block in `nginx/conf/junctions.conf`:
+
+```nginx
+location /mydevice/ {
+    set $junction_device "mydevice";
+    set $junction_prefix "/mydevice";
+    include conf/snippets/junction-proxy.conf;
+}
+```
+
+The nginx config stays small because each device owns its logic in Lua.
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VALKEY_HOST` | `127.0.0.1` | Valkey host |
+| `VALKEY_PORT` | `6379` | Valkey port |
+| `VALKEY_PASSWORD` | _(empty)_ | Valkey AUTH password |
+| `SESSION_KEY_PREFIX` | `session:` | Prefix for session keys |
+
+## Notes
+
+- Update the `resolver` directive in `nginx/nginx.conf` for your environment (Docker DNS, kube-dns, etc.).
+- `proxy_ssl_verify off` is enabled for typical lab device self-signed certificates. Tighten this in production if you terminate TLS to known backends.
+- F5 module rewrites `Set-Cookie` paths so cookies stay scoped under `/f5/{session_id}/`.
