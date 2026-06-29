@@ -18,6 +18,21 @@ local HOP_BY_HOP = {
     ["content-encoding"] = true,
 }
 
+local BINARY_EXTENSIONS = {
+    png = true,
+    jpg = true,
+    jpeg = true,
+    gif = true,
+    webp = true,
+    ico = true,
+    bmp = true,
+    woff = true,
+    woff2 = true,
+    ttf = true,
+    otf = true,
+    eot = true,
+}
+
 local function append_query(url, args)
     if not args or args == "" then
         return url
@@ -57,28 +72,46 @@ local function get_header(headers, name)
     return headers[name] or headers[name:lower()] or headers[name:upper()]
 end
 
-local function looks_binary(data)
-    if not data or #data < 8 then
-        return false
-    end
-
-    if gzip.is_gzip(data) then
-        return true
-    end
-
-    local sample = math.min(#data, 256)
-    local control = 0
-    for i = 1, sample do
-        local byte = data:byte(i)
-        if byte < 9 or (byte > 13 and byte < 32) then
-            control = control + 1
+local function is_binary_asset(content_type, uri)
+    if content_type and content_type ~= "" then
+        local ct = content_type:lower()
+        if ct:find("^image/", 1)
+            or ct:find("^font/", 1)
+            or ct:find("font%-woff", 1)
+            or ct:find("application/vnd%.ms%-fontobject", 1)
+            or ct:find("^application/octet%-stream", 1) then
+            return true
         end
     end
 
-    return control > (sample * 0.1)
+    uri = uri or ""
+    local extension = uri:match("%.([^./?]+)$")
+    if extension then
+        return BINARY_EXTENSIONS[extension:lower()] == true
+    end
+
+    return false
 end
 
-local function decode_body(body, headers)
+local function is_text_like(content_type)
+    if not content_type or content_type == "" then
+        return false
+    end
+
+    local ct = content_type:lower()
+    return ct:find("text/html", 1, true)
+        or ct:find("application/javascript", 1, true)
+        or ct:find("text/javascript", 1, true)
+        or ct:find("text/css", 1, true)
+        or ct:find("application/json", 1, true)
+        or ct:find("text/plain", 1, true)
+        or ct:find("text/xml", 1, true)
+        or ct:find("application/xml", 1, true)
+        or ct:find("image/svg+xml", 1, true)
+end
+
+local function decode_body(body, headers, uri)
+    local content_type = get_header(headers, "Content-Type")
     local encoding = get_header(headers, "Content-Encoding")
     if encoding then
         encoding = encoding:lower():match("^[%w%-]+")
@@ -88,7 +121,8 @@ local function decode_body(body, headers)
         return nil, "unsupported Content-Encoding: br"
     end
 
-    if encoding == "gzip" or gzip.is_gzip(body) then
+    -- Only decompress when the upstream explicitly says so.
+    if encoding == "gzip" then
         local plain, err = gzip.inflate_gzip(body)
         if not plain then
             return nil, err or "gzip decompression failed"
@@ -108,20 +142,18 @@ local function decode_body(body, headers)
         return plain
     end
 
-    if looks_binary(body) then
+    -- Binary assets (png, woff, etc.) are not compressed text — pass through as-is.
+    if is_binary_asset(content_type, uri) then
+        return body
+    end
+
+    -- Some HTML/JS/CSS devices send gzip without a Content-Encoding header.
+    if is_text_like(content_type) and gzip.is_gzip(body) then
         local plain, err = gzip.inflate_gzip(body)
         if plain then
-            ngx.log(ngx.INFO, "upstream inferred gzip decompressed bytes=", #body, "->", #plain)
+            ngx.log(ngx.INFO, "upstream inferred gzip for text asset bytes=", #body, "->", #plain)
             return plain
         end
-
-        plain, err = gzip.inflate_deflate(body)
-        if plain then
-            ngx.log(ngx.INFO, "upstream inferred deflate decompressed bytes=", #body, "->", #plain)
-            return plain
-        end
-
-        return nil, "upstream body looks compressed but could not be decompressed"
     end
 
     return body
@@ -139,9 +171,6 @@ function _M.fetch(url, opts)
     local httpc = http.new()
     httpc:set_timeout(opts.timeout or DEFAULT_TIMEOUT)
 
-    -- request_uri() already manages the connection lifecycle; do not call
-    -- set_keepalive() again afterward. Use keepalive=false for device backends
-    -- that send Connection: close over HTTPS.
     local res, err = httpc:request_uri(url, {
         method = opts.method or "GET",
         headers = normalize_headers(opts.headers),
@@ -155,7 +184,7 @@ function _M.fetch(url, opts)
     end
 
     local headers = res.headers or {}
-    local body, decode_err = decode_body(res.body or "", headers)
+    local body, decode_err = decode_body(res.body or "", headers, opts.uri)
     if not body then
         return nil, decode_err
     end

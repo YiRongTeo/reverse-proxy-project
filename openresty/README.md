@@ -123,7 +123,7 @@ Rewriting uses `lua-resty-http` in `content.lua` to fetch the exact `device_upst
 | `Location: /logout` | `Location: /f5/{session_id}/logout` |
 | `{{:host_addr}}` templates | proxy host |
 
-If the page shows garbled characters, the device likely sent a compressed response. `lib/gzip.lua` decompresses gzip and deflate bodies before rewriting. Upstream connections use `keepalive=false` to avoid pool errors with HTTPS device GUIs.
+If the page shows garbled characters, the device likely sent a compressed HTML/JS/CSS response. `lib/gzip.lua` decompresses only when `Content-Encoding` is set (or for text assets with gzip magic bytes). Binary assets such as PNG and WOFF are passed through without decompression.
 
 Check `/var/log/nginx/error.log` for:
 

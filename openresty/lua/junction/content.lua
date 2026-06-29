@@ -22,6 +22,7 @@ end
 local res, fetch_err = upstream_fetch.fetch(target_url, {
     method = method,
     args = ngx.var.args,
+    uri = ngx.var.uri,
     headers = ngx.req.get_headers(),
     body = ngx.req.get_body_data(),
 })
