@@ -87,11 +87,24 @@ docker compose up --build
 curl http://localhost:8080/healthz
 ```
 
-Proxy example (after seeding a session):
+Proxy examples (after seeding a session):
 
 ```bash
+# F5 BIG-IP
 curl -I "http://localhost:8080/f5/abc123/"
+
+# Infoblox NIOS
+curl -I "http://localhost:8080/infoblox/abc123/"
 ```
+
+### Infoblox session example
+
+```bash
+docker compose exec valkey valkey-cli SET 'session:abc123' \
+  '{"url":"https://10.10.10.10","device_type":"infoblox","host":"10.10.10.10"}'
+```
+
+Then open `http://localhost:8080/infoblox/abc123/` in a browser. WUI and `/wapi/` API calls are rewritten to stay under the junction path.
 
 ## Add a new device junction
 
