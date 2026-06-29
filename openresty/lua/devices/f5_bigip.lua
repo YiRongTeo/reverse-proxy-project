@@ -1,25 +1,32 @@
 --[[
-  F5 BIG-IP junction module.
+  F5 BIG-IP Load Balancer junction module.
 
   URI pattern:
     /f5/{session_id}/...
 
   Valkey value examples:
     "https://10.10.10.10"
-    {"url":"https://10.10.10.10:443","device_type":"f5_bigip"}
+    {"url":"https://10.10.10.10:443","device_type":"f5_bigip","host":"10.10.10.10"}
+    {"url":"https://10.10.10.10","device_type":"f5_load_balancer","host":"bigip.corp.local"}
+
+  device_type may be "f5_bigip" or "f5_load_balancer".
+  Set host to the F5 management hostname when connecting by IP.
 ]]
 
 local html_rewrite = require "lib.html_rewrite"
+local junction_device = require "lib.junction_device"
 
-local _M = {}
+local ACCEPTED_DEVICE_TYPES = {
+    f5_bigip = true,
+    f5_load_balancer = true,
+}
 
-_M.name = "f5_bigip"
-_M.junction_prefix = "/f5"
-
-_M.cors = {
-    allow_credentials = true,
-    allow_private_network = true,
-    allow_headers = table.concat({
+local device = junction_device.new({
+    name = "f5_bigip",
+    junction_prefix = "/f5",
+    max_redirects = 10,
+    aggressive_absolute_rewrite = true,
+    cors_allow_headers = {
         "Authorization",
         "Content-Type",
         "X-Requested-With",
@@ -27,78 +34,46 @@ _M.cors = {
         "Origin",
         "X-F5-Auth-Token",
         "X-Auth-Token",
-    }, ", "),
-}
+        "X-CSRF-Token",
+    },
+})
 
-function _M.validate_session(session_id, session_data)
-    if session_data.device_type and session_data.device_type ~= _M.name then
+local base_prepare_upstream_headers = device.prepare_upstream_headers
+
+function device.validate_session(session_id, session_data)
+    if session_data.device_type and not ACCEPTED_DEVICE_TYPES[session_data.device_type] then
         return false
     end
 
     return true
 end
 
-function _M.before_proxy(ctx)
-    ngx.ctx.f5_original_host = ctx.session.host
-    return true
-end
-
-function _M.configure_request_headers(ctx)
-    local backend_host = ctx.session.host
-    if not backend_host and ctx.session.url then
-        backend_host = ctx.session.url:match("^https?://([^:/]+)")
+function device.prepare_upstream_headers(headers, ctx)
+    if base_prepare_upstream_headers then
+        base_prepare_upstream_headers(headers, ctx)
     end
 
-    if backend_host then
-        ngx.req.set_header("Host", backend_host)
-    end
-
-    -- Request uncompressed bodies so HTML/JS/CSS can be rewritten in body_filter.
-    -- nginx also sets proxy_set_header Accept-Encoding "" as a belt-and-braces guard.
-    ngx.req.clear_header("Accept-Encoding")
-    ngx.req.set_header("Accept-Encoding", "identity")
-
-    ngx.req.set_header("X-Forwarded-Ssl", "on")
-end
-
-function _M.should_rewrite_body(content_type, uri)
-    return html_rewrite.should_rewrite_response(content_type, uri)
-end
-
-function _M.rewrite_body(body, junction_prefix, session_id, backend_base)
-    return html_rewrite.rewrite(body, junction_prefix, session_id, backend_base)
-end
-
-function _M.on_response_headers(ctx)
-    local prefix = _M.junction_prefix .. "/" .. (ctx.session_id or "") .. "/"
-
-    local set_cookie = ngx.header["Set-Cookie"]
-    if set_cookie then
-        if type(set_cookie) == "table" then
-            for i, cookie in ipairs(set_cookie) do
-                set_cookie[i] = cookie:gsub("Path=/", "Path=" .. prefix)
-            end
-            ngx.header["Set-Cookie"] = set_cookie
-        else
-            ngx.header["Set-Cookie"] = set_cookie:gsub("Path=/", "Path=" .. prefix)
-        end
-    end
-
-    -- Some F5/TMUI pages emit Refresh redirects with root-absolute paths.
-    local refresh = ngx.header["Refresh"]
-    if refresh then
-        local junction_base, junction_root = html_rewrite.junction_paths(
-            ctx.junction_prefix or _M.junction_prefix,
-            ctx.session_id
+    local referer = headers["Referer"] or headers["referer"]
+    if referer then
+        headers["Referer"] = html_rewrite.junction_to_backend_url(
+            referer,
+            ctx.junction_prefix or device.junction_prefix,
+            ctx.session_id,
+            ctx.backend_base,
+            ctx.backend_host
         )
+        headers["referer"] = nil
+    end
 
-        ngx.header["Refresh"] = refresh:gsub("url=(/[^%s;]+)", function(path)
-            if html_rewrite.needs_prefix(path, junction_base) then
-                return "url=" .. html_rewrite.prefix_path(path, junction_base, junction_root)
-            end
-            return "url=" .. path
-        end)
+    local origin = headers["Origin"] or headers["origin"]
+    if origin then
+        headers["Origin"] = html_rewrite.junction_to_backend_origin(
+            origin,
+            ctx.backend_base,
+            ctx.backend_host
+        )
+        headers["origin"] = nil
     end
 end
 
-return _M
+return device

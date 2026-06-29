@@ -109,7 +109,7 @@ curl http://localhost:8080/healthz
 
 | Device | Junction path | `device_type` | Module |
 |--------|---------------|---------------|--------|
-| F5 BIG-IP | `/f5/{session_id}/` | `f5_bigip` | `devices/f5_bigip.lua` |
+| F5 BIG-IP Load Balancer | `/f5/{session_id}/` | `f5_bigip` or `f5_load_balancer` | `devices/f5_bigip.lua` |
 | Infoblox NIOS | `/infoblox/{session_id}/` | `infoblox` | `devices/infoblox.lua` |
 | ZDNS | `/zdns/{session_id}/` | `zdns` | `devices/zdns.lua` |
 | Cisco ISE (TACACS) | `/ise/{session_id}/` | `cisco_ise_tacacs` | `devices/cisco_ise_tacacs.lua` |
@@ -126,6 +126,10 @@ curl -I "http://localhost:8080/ise/abc123/"
 ### Session examples
 
 ```bash
+# F5 BIG-IP Load Balancer (TMUI)
+docker compose exec valkey valkey-cli SET 'session:f5lb1' \
+  '{"url":"https://10.10.10.10","device_type":"f5_load_balancer","host":"10.10.10.10"}'
+
 # Infoblox NIOS
 docker compose exec valkey valkey-cli SET 'session:infoblox1' \
   '{"url":"https://10.10.10.10","device_type":"infoblox","host":"10.10.10.10"}'
@@ -143,7 +147,9 @@ Set `host` to the ISE FQDN when the appliance issues redirects using a hostname.
 
 The ISE admin UI uses OWASP CSRFGuard (`/admin/JavaScriptServlet`). The junction rewrites upstream `Referer`/`Origin` headers back to the ISE URL, patches the servlet's `isValidDomain(document.domain, …)` check for the proxy host, and sets `Content-Type: application/javascript` when the servlet body is real JavaScript (not an HTML error page). Hard-refresh the browser if the servlet response was cached.
 
-Infoblox, ZDNS, and Cisco ISE junctions follow upstream redirects server-side and rewrite `Location` headers for the browser.
+Infoblox, ZDNS, Cisco ISE, and F5 junctions follow upstream redirects server-side and rewrite `Location` headers for the browser.
+
+**F5 tip:** TMUI lives under `/tmui/`. A typical first request is `/f5/{session_id}/tmui/login.jsp`. Set `host` to the F5 management hostname when the session `url` uses an IP address.
 
 **Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
 
