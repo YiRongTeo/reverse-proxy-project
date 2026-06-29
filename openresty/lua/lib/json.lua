@@ -23,14 +23,18 @@ local function load_cjson()
 end
 
 function _M.decode(raw)
-    local json, err = load_cjson()
-    if not json then
+    local json_mod, err = load_cjson()
+    if not json_mod then
         return nil, err
     end
 
-    local decoded, decode_err = json.decode(raw)
+    local decoded, decode_err = json_mod.decode(raw)
     if decoded ~= nil then
-        return decoded
+        return decoded, nil
+    end
+
+    if decode_err == nil or decode_err == "" then
+        decode_err = "json decode returned nil"
     end
 
     return nil, decode_err

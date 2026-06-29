@@ -9,6 +9,8 @@ local function trim(raw)
     if not raw then
         return raw
     end
+
+    raw = raw:gsub("^\239\187\191", "")
     return raw:match("^%s*(.-)%s*$")
 end
 
@@ -18,33 +20,90 @@ local function strip_wrapping_quotes(raw)
         return raw
     end
 
-    if raw:sub(1, 1) == '"' and raw:sub(-1) == '"' then
+    local first = raw:sub(1, 1)
+    if first == "{" or first == "[" then
+        return raw
+    end
+
+    if first == '"' and raw:sub(-1) == '"' then
         return raw:sub(2, -2)
     end
 
-    if raw:sub(1, 1) == "'" and raw:sub(-1) == "'" then
+    if first == "'" and raw:sub(-1) == "'" then
         return raw:sub(2, -2)
     end
 
     return raw
 end
 
-local function extract_json_fields(raw)
+local function unescape_json_string(value)
+    if not value then
+        return value
+    end
+
+    return (value:gsub("\\(.)", {
+        ['"'] = '"',
+        ["\\"] = "\\",
+        ["/"] = "/",
+        b = "\b",
+        f = "\f",
+        n = "\n",
+        r = "\r",
+        t = "\t",
+    }))
+end
+
+local function extract_quoted_field(raw, field)
     if not raw or raw == "" then
         return nil
     end
 
-    if not raw:find("{", 1, true) then
+    local key_pattern = '"' .. field .. '"%s*:%s*"'
+    local start, finish = raw:find(key_pattern)
+    if not start then
+        key_pattern = "'" .. field .. "'%s*:%s*'"
+        start, finish = raw:find(key_pattern)
+        if not start then
+            return nil
+        end
+    end
+
+    local i = finish + 1
+    local chars = {}
+    while i <= #raw do
+        local c = raw:sub(i, i)
+        if c == "\\" then
+            local next_char = raw:sub(i + 1, i + 1)
+            if next_char == "" then
+                break
+            end
+            chars[#chars + 1] = next_char
+            i = i + 2
+        elseif c == '"' or c == "'" then
+            break
+        else
+            chars[#chars + 1] = c
+            i = i + 1
+        end
+    end
+
+    local value = table.concat(chars)
+    if value == "" then
+        return nil
+    end
+
+    return unescape_json_string(value)
+end
+
+local function extract_json_fields(raw)
+    if not raw or raw == "" or not raw:find("{", 1, true) then
         return nil
     end
 
     local session = {
-        url = raw:match('"url"%s*:%s*"([^"]+)"')
-            or raw:match("'url'%s*:%s*'([^']+)'"),
-        host = raw:match('"host"%s*:%s*"([^"]+)"')
-            or raw:match("'host'%s*:%s*'([^']+)'"),
-        device_type = raw:match('"device_type"%s*:%s*"([^"]+)"')
-            or raw:match("'device_type'%s*:%s*'([^']+)'"),
+        url = extract_quoted_field(raw, "url"),
+        host = extract_quoted_field(raw, "host"),
+        device_type = extract_quoted_field(raw, "device_type"),
     }
 
     if session.url and session.url ~= "" then
@@ -64,11 +123,16 @@ local function normalize_session_table(decoded)
         return nil
     end
 
-    if url:find("{", 1, true) then
+    url = trim(url)
+    if url == "" or url:sub(1, 1) == "{" then
         return nil
     end
 
     decoded.url = url
+    if type(decoded.host) == "string" then
+        decoded.host = trim(decoded.host)
+    end
+
     return decoded
 end
 
@@ -82,11 +146,39 @@ local function plain_url_session(raw)
         return { url = raw }
     end
 
-    if raw:match("^[%d%.]+$") or raw:match("^[%w%.%-]+$") then
+    if raw:match("^[%d%.:]+$") or raw:match("^[%w%.%-:]+$") then
         return { url = "https://" .. raw }
     end
 
     return nil
+end
+
+local function try_decode_json(raw)
+    local candidates = { raw }
+
+    local unescaped = raw:gsub('\\"', '"')
+    if unescaped ~= raw then
+        candidates[#candidates + 1] = unescaped
+    end
+
+    for _, candidate in ipairs(candidates) do
+        local decoded, decode_err = json.decode(candidate)
+        if type(decoded) == "table" then
+            return decoded
+        end
+
+        if type(decoded) == "string" then
+            local nested = json.decode(decoded)
+            if type(nested) == "table" then
+                return nested
+            end
+            if decoded:match("^https?://") then
+                return { url = decoded }
+            end
+        end
+    end
+
+    return nil, "json decode failed"
 end
 
 local function parse_session_value(raw)
@@ -96,27 +188,14 @@ local function parse_session_value(raw)
 
     raw = strip_wrapping_quotes(raw)
 
-    local decoded, decode_err = json.decode(raw)
-
-    if type(decoded) == "string" then
-        local nested = json.decode(decoded)
-        if type(nested) == "table" then
-            decoded = nested
-        elseif decoded:match("^https?://") then
-            return { url = decoded }
-        end
-    end
-
-    local session = normalize_session_table(decoded)
+    local session = normalize_session_table(try_decode_json(raw))
     if session then
         return session
     end
 
     session = extract_json_fields(raw)
     if session then
-        if decode_err then
-            ngx.log(ngx.WARN, "session json decode failed, extracted fields from value: ", decode_err)
-        end
+        ngx.log(ngx.WARN, "session json decode failed, extracted fields from raw value")
         return session
     end
 
@@ -127,13 +206,7 @@ local function parse_session_value(raw)
         end
     end
 
-    if decode_err then
-        ngx.log(ngx.WARN, "session value parse failed: ", decode_err, " value=", raw:sub(1, 120))
-    elseif raw:find("{", 1, true) then
-        ngx.log(ngx.WARN, "session value looks like json but no url field was found: ",
-            raw:sub(1, 120))
-    end
-
+    ngx.log(ngx.WARN, "session value could not be parsed: ", raw:sub(1, 160))
     return nil, "invalid session value"
 end
 
