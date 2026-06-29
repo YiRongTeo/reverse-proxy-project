@@ -5,6 +5,14 @@ local _M = {}
 
 local DEFAULT_TIMEOUT = tonumber(os.getenv("UPSTREAM_TIMEOUT_MS")) or 300000
 
+local REDIRECT_STATUSES = {
+    [301] = true,
+    [302] = true,
+    [303] = true,
+    [307] = true,
+    [308] = true,
+}
+
 local HOP_BY_HOP = {
     ["connection"] = true,
     ["keep-alive"] = true,
@@ -121,7 +129,6 @@ local function decode_body(body, headers, uri)
         return nil, "unsupported Content-Encoding: br"
     end
 
-    -- Only decompress when the upstream explicitly says so.
     if encoding == "gzip" then
         local plain, err = gzip.inflate_gzip(body)
         if not plain then
@@ -142,12 +149,10 @@ local function decode_body(body, headers, uri)
         return plain
     end
 
-    -- Binary assets (png, woff, etc.) are not compressed text — pass through as-is.
     if is_binary_asset(content_type, uri) then
         return body
     end
 
-    -- Some HTML/JS/CSS devices send gzip without a Content-Encoding header.
     if is_text_like(content_type) and gzip.is_gzip(body) then
         local plain, err = gzip.inflate_gzip(body)
         if plain then
@@ -159,6 +164,66 @@ local function decode_body(body, headers, uri)
     return body
 end
 
+local function merge_set_cookie(jar, headers)
+    local set_cookie = headers["Set-Cookie"] or headers["set-cookie"]
+    if not set_cookie then
+        return
+    end
+
+    local cookies = set_cookie
+    if type(cookies) ~= "table" then
+        cookies = { cookies }
+    end
+
+    for _, cookie in ipairs(cookies) do
+        local name, value = cookie:match("^%s*([^=]+)=([^;]*)")
+        if name then
+            jar[name] = value
+        end
+    end
+end
+
+local function cookie_header(jar)
+    local parts = {}
+    for name, value in pairs(jar) do
+        parts[#parts + 1] = name .. "=" .. value
+    end
+
+    return table.concat(parts, "; ")
+end
+
+local function resolve_redirect_url(base_url, location)
+    if location:match("^https?://") then
+        return location
+    end
+
+    if location:sub(1, 1) == "/" then
+        local origin = base_url:match("^(https?://[^/]+)")
+        return origin .. location
+    end
+
+    local origin, path = base_url:match("^(https?://[^/]+)(/.*)$")
+    if not origin then
+        return base_url
+    end
+
+    local base_dir = path:match("^(.*/)[^/]*$") or "/"
+    return origin .. base_dir .. location
+end
+
+local function do_request(url, method, headers, body, timeout)
+    local httpc = http.new()
+    httpc:set_timeout(timeout or DEFAULT_TIMEOUT)
+
+    return httpc:request_uri(url, {
+        method = method,
+        headers = headers,
+        body = body,
+        ssl_verify = false,
+        keepalive = false,
+    })
+end
+
 function _M.fetch(url, opts)
     opts = opts or {}
 
@@ -166,26 +231,52 @@ function _M.fetch(url, opts)
         return nil, "missing upstream url"
     end
 
-    url = append_query(url, opts.args)
+    local method = opts.method or "GET"
+    local max_redirects = 0
+    if opts.follow_redirects and method == "GET" then
+        max_redirects = opts.max_redirects or 5
+    end
 
-    local httpc = http.new()
-    httpc:set_timeout(opts.timeout or DEFAULT_TIMEOUT)
+    local current_url = append_query(url, opts.args)
+    local base_headers = normalize_headers(opts.headers)
+    local cookie_jar = {}
+    local body = opts.body
+    local res
 
-    local res, err = httpc:request_uri(url, {
-        method = opts.method or "GET",
-        headers = normalize_headers(opts.headers),
-        body = opts.body,
-        ssl_verify = false,
-        keepalive = false,
-    })
+    for hop = 0, max_redirects do
+        local headers = {}
+        for key, value in pairs(base_headers) do
+            headers[key] = value
+        end
 
-    if not res then
-        return nil, "upstream request failed: " .. (err or "unknown")
+        local cookie = cookie_header(cookie_jar)
+        if cookie ~= "" then
+            headers["Cookie"] = cookie
+        end
+
+        local err
+        res, err = do_request(current_url, method, headers, body, opts.timeout)
+        if not res then
+            return nil, "upstream request failed: " .. (err or "unknown")
+        end
+
+        merge_set_cookie(cookie_jar, res.headers or {})
+
+        local location = get_header(res.headers, "Location")
+        if hop < max_redirects and REDIRECT_STATUSES[res.status] and location then
+            current_url = resolve_redirect_url(current_url, location)
+            ngx.log(ngx.INFO, "upstream redirect hop=", hop + 1, " status=", res.status,
+                " -> ", current_url)
+            method = "GET"
+            body = nil
+        else
+            break
+        end
     end
 
     local headers = res.headers or {}
-    local body, decode_err = decode_body(res.body or "", headers, opts.uri)
-    if not body then
+    local decoded, decode_err = decode_body(res.body or "", headers, opts.uri)
+    if not decoded then
         return nil, decode_err
     end
 
@@ -197,7 +288,7 @@ function _M.fetch(url, opts)
     return {
         status = res.status,
         headers = headers,
-        body = body,
+        body = decoded,
     }
 end
 

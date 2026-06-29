@@ -25,6 +25,8 @@ local res, fetch_err = upstream_fetch.fetch(target_url, {
     uri = ngx.var.uri,
     headers = ngx.req.get_headers(),
     body = ngx.req.get_body_data(),
+    follow_redirects = device.follow_redirects,
+    max_redirects = device.max_redirects,
 })
 
 if not res then
@@ -37,6 +39,41 @@ local body = res.body or ""
 ngx.log(ngx.INFO, "junction upstream fetch uri=", ngx.var.uri or "",
     " target=", target_url, " status=", res.status, " upstream_bytes=", #body)
 
+local ctx = {
+    session_id = ngx.ctx.session_id,
+    junction_prefix = ngx.ctx.junction_prefix or device.junction_prefix,
+    backend_base = ngx.ctx.backend_base,
+    backend_host = ngx.ctx.backend_host,
+}
+
+local junction_base, junction_root = html_rewrite.junction_paths(
+    ctx.junction_prefix,
+    ctx.session_id
+)
+
+local location = res.headers["Location"] or res.headers["location"]
+local rewritten_location
+
+if location and ctx.session_id then
+    if device.rewrite_location then
+        rewritten_location = device.rewrite_location(location, ctx)
+    else
+        rewritten_location = html_rewrite.rewrite_location(
+            location,
+            junction_base,
+            junction_root,
+            ctx.backend_base,
+            ctx.backend_host
+        )
+    end
+
+    if rewritten_location ~= location then
+        ngx.log(ngx.INFO, "junction location rewritten ", location, " -> ", rewritten_location)
+    else
+        ngx.log(ngx.WARN, "junction location not rewritten: ", location)
+    end
+end
+
 ngx.status = res.status
 
 local skip_headers = {
@@ -44,6 +81,7 @@ local skip_headers = {
     ["transfer-encoding"] = true,
     ["content-encoding"] = true,
     ["connection"] = true,
+    ["location"] = true,
 }
 
 for key, value in pairs(res.headers) do
@@ -52,29 +90,10 @@ for key, value in pairs(res.headers) do
     end
 end
 
-local ctx = {
-    session_id = ngx.ctx.session_id,
-    junction_prefix = ngx.ctx.junction_prefix or device.junction_prefix,
-    backend_base = ngx.ctx.backend_base,
-}
-
-local location = res.headers["Location"] or res.headers["location"]
-if location and ctx.session_id and ctx.junction_prefix then
-    local junction_base, junction_root = html_rewrite.junction_paths(
-        ctx.junction_prefix,
-        ctx.session_id
-    )
-
-    local rewritten = html_rewrite.rewrite_location(
-        location,
-        junction_base,
-        junction_root,
-        ctx.backend_base
-    )
-
-    if rewritten ~= location then
-        ngx.header["Location"] = rewritten
-    end
+if rewritten_location then
+    ngx.header["Location"] = rewritten_location
+elseif location then
+    ngx.header["Location"] = location
 end
 
 if device.on_response_headers then
@@ -106,5 +125,8 @@ elseif should_rewrite and #body == 0 then
 end
 
 if body and #body > 0 then
+    if res.status == 304 or res.status == 204 then
+        ngx.status = ngx.HTTP_OK
+    end
     ngx.print(body)
 end

@@ -43,27 +43,72 @@ function _M.proxy_origin()
     return scheme .. "://" .. host
 end
 
-function _M.rewrite_location(location, junction_base, junction_root, backend_base)
+function _M.normalize_origin(url)
+    if not url or url == "" then
+        return ""
+    end
+
+    url = url:gsub("/+$", "")
+    url = url:gsub("^https://([^:/]+):443", "https://%1")
+    url = url:gsub("^http://([^:/]+):80", "http://%1")
+    return url
+end
+
+function _M.extract_host(url)
+    if not url then
+        return nil
+    end
+
+    return url:match("^https?://([^:/]+)")
+end
+
+function _M.hosts_match(host_a, host_b)
+    if not host_a or not host_b then
+        return false
+    end
+
+    return host_a:lower() == host_b:lower()
+end
+
+function _M.rewrite_location(location, junction_base, junction_root, backend_base, backend_host)
     if not location or location == "" then
         return location
     end
 
     if location:sub(1, 1) == "/" and location:sub(1, 2) ~= "/" then
-        return _M.prefix_path(location, junction_base, junction_root)
+        return _M.proxy_origin() .. _M.prefix_path(location, junction_base, junction_root)
     end
 
-    local backend = (backend_base or ""):gsub("/+$", "")
-    if backend ~= "" and location:sub(1, #backend) == backend then
-        local path = location:sub(#backend + 1)
-        if path == "" then
-            path = "/"
+    local backend = _M.normalize_origin(backend_base or "")
+    backend_host = backend_host or _M.extract_host(backend)
+
+    if backend ~= "" then
+        local norm_location = location
+        if location:match("^https?://") then
+            local scheme, host, port, path = location:match("^(https?)://([^:/]+):?(%d*)(.*)$")
+            if scheme and host then
+                local port_suffix = ""
+                if port ~= "" and not (scheme == "https" and port == "443") and not (scheme == "http" and port == "80") then
+                    port_suffix = ":" .. port
+                end
+                norm_location = scheme .. "://" .. host .. port_suffix .. (path or "")
+            end
         end
-        return _M.proxy_origin() .. _M.prefix_path(path, junction_base, junction_root)
+
+        norm_location = _M.normalize_origin(norm_location:match("^(https?://[^/]+)"))
+            .. (norm_location:match("^https?://[^/]+(.*)$") or "")
+
+        if norm_location:sub(1, #backend) == backend then
+            local path = norm_location:sub(#backend + 1)
+            if path == "" then
+                path = "/"
+            end
+            return _M.proxy_origin() .. _M.prefix_path(path, junction_base, junction_root)
+        end
     end
 
-    local backend_host = backend:match("^https?://([^:/]+)")
-    local location_host = location:match("^https?://([^:/]+)")
-    if backend_host and location_host == backend_host then
+    local location_host = _M.extract_host(location)
+    if backend_host and location_host and _M.hosts_match(backend_host, location_host) then
         local path = location:match("^https?://[^/]+(.*)$") or "/"
         if path == "" then
             path = "/"

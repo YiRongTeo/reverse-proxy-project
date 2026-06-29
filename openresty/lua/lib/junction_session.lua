@@ -50,6 +50,8 @@ function _M.build_upstream_url(base_url, subpath)
     end
 
     base_url = base_url:gsub("/+$", "")
+    base_url = base_url:gsub("^https://([^:/]+):443", "https://%1")
+    base_url = base_url:gsub("^http://([^:/]+):80", "http://%1")
     subpath = subpath or "/"
     if subpath:sub(1, 1) ~= "/" then
         subpath = "/" .. subpath

@@ -16,6 +16,9 @@ local _M = {}
 _M.name = "infoblox"
 _M.junction_prefix = "/infoblox"
 
+_M.follow_redirects = true
+_M.max_redirects = 5
+
 _M.cors = {
     allow_credentials = true,
     allow_private_network = true,
@@ -65,6 +68,21 @@ end
 
 function _M.rewrite_body(body, junction_prefix, session_id, backend_base)
     return html_rewrite.rewrite(body, junction_prefix, session_id, backend_base)
+end
+
+function _M.rewrite_location(location, ctx)
+    local junction_base, junction_root = html_rewrite.junction_paths(
+        ctx.junction_prefix or _M.junction_prefix,
+        ctx.session_id
+    )
+
+    return html_rewrite.rewrite_location(
+        location,
+        junction_base,
+        junction_root,
+        ctx.backend_base,
+        ctx.backend_host
+    )
 end
 
 function _M.on_response_headers(ctx)

@@ -68,4 +68,5 @@ ngx.ctx.junction_device = device_name
 ngx.ctx.junction_prefix = junction_prefix
 ngx.ctx.session_id = session_id
 ngx.ctx.backend_base = session_data.url:gsub("/+$", "")
+ngx.ctx.backend_host = session_data.host or session_data.url:match("^https?://([^:/]+)")
 ngx.var.session_id = session_id

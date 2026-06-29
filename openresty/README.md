@@ -41,6 +41,7 @@ openresty/
     │   └── device_registry.lua
     └── devices/
         ├── f5_bigip.lua
+        ├── infoblox.lua
         └── _template.lua
 ```
 
@@ -104,7 +105,9 @@ docker compose exec valkey valkey-cli SET 'session:abc123' \
   '{"url":"https://10.10.10.10","device_type":"infoblox","host":"10.10.10.10"}'
 ```
 
-Then open `http://localhost:8080/infoblox/abc123/` in a browser. WUI and `/wapi/` API calls are rewritten to stay under the junction path.
+Then open `http://localhost:8080/infoblox/abc123/` in a browser. Infoblox typically responds with a 302 to `/wui/` on first access; the junction follows that redirect server-side and rewrites `Location` headers that reach the browser.
+
+**Valkey URL tip:** `https://10.10.10.10` and `https://10.10.10.10:443` are equivalent — port 443 is normalized automatically.
 
 ## Add a new device junction
 
