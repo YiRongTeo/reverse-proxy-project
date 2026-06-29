@@ -113,7 +113,7 @@ The nginx config stays small because each device owns its logic in Lua.
 
 Device GUIs often emit root-absolute paths (`<base href="/">`, `src="/.../runtime.js"`, `fetch('/api/...')`) that break behind a junction.
 
-Rewriting uses `ngx.location.capture` to fetch the full upstream response into memory, rewrite it in `content.lua`, then send it to the client. This avoids `body_filter` receiving empty bodies from the gunzip/filter chain.
+Rewriting uses `lua-resty-http` in `content.lua` to fetch the exact `device_upstream` URL (set during session lookup), rewrite the body in memory, then respond. This avoids `ngx.location.capture` sending the junction path (`/f5/...`) to the device instead of the real backend path.
 
 | Pattern | Rewritten to |
 |---------|--------------|
@@ -125,7 +125,7 @@ Rewriting uses `ngx.location.capture` to fetch the full upstream response into m
 
 Check `/var/log/nginx/error.log` for:
 
-- `junction capture uri=... upstream_bytes=N` — full body received from device
+- `junction upstream fetch uri=... target=https://device/... upstream_bytes=N` — full body received from device
 - `junction rewrite applied uri=... bytes=N->M` — body was rewritten
 
 If `upstream_bytes=0`, the device returned an empty body (redirect, 304, or HEAD).

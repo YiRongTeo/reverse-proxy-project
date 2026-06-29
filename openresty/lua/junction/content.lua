@@ -1,6 +1,7 @@
 local device_registry = require "lib.device_registry"
 local html_rewrite = require "lib.html_rewrite"
 local proxy_util = require "lib.proxy_util"
+local upstream_fetch = require "lib.upstream_fetch"
 
 local device_name = ngx.ctx.junction_device or ngx.var.junction_device
 local device = device_registry.get(device_name)
@@ -8,54 +9,32 @@ if not device then
     return proxy_util.deny(ngx.HTTP_NOT_FOUND, "unknown device junction")
 end
 
+local target_url = ngx.var.device_upstream
+if not target_url or target_url == "" then
+    return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, "missing upstream url")
+end
+
 local method = ngx.req.get_method()
 if method == "POST" or method == "PUT" or method == "PATCH" or method == "DELETE" then
     ngx.req.read_body()
 end
 
-local method_map = {
-    GET = ngx.HTTP_GET,
-    HEAD = ngx.HTTP_HEAD,
-    POST = ngx.HTTP_POST,
-    PUT = ngx.HTTP_PUT,
-    PATCH = ngx.HTTP_PATCH,
-    DELETE = ngx.HTTP_DELETE,
-}
-
-local capture_method = method_map[method]
-if not capture_method then
-    return proxy_util.deny(ngx.HTTP_BAD_REQUEST, "unsupported method")
-end
-
-local capture_headers = ngx.req.get_headers()
-capture_headers["Accept-Encoding"] = nil
-
-for key, value in pairs(capture_headers) do
-    if type(value) == "table" then
-        capture_headers[key] = table.concat(value, ", ")
-    end
-end
-
-local res = ngx.location.capture("@junction_upstream", {
-    method = capture_method,
-    args = ngx.req.get_uri_args(),
+local res, fetch_err = upstream_fetch.fetch(target_url, {
+    method = method,
+    args = ngx.var.args,
+    headers = ngx.req.get_headers(),
     body = ngx.req.get_body_data(),
-    always_forward_body = true,
-    copy_all_vars = true,
-    headers = capture_headers,
 })
 
 if not res then
-    return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, "upstream capture failed")
-end
-
-if res.truncated then
-    ngx.log(ngx.WARN, "junction capture truncated uri=", ngx.var.uri or "")
+    ngx.log(ngx.ERR, "junction upstream fetch failed uri=", ngx.var.uri or "",
+        " target=", target_url, " err=", fetch_err)
+    return proxy_util.deny(ngx.HTTP_BAD_GATEWAY, fetch_err)
 end
 
 local body = res.body or ""
-ngx.log(ngx.INFO, "junction capture uri=", ngx.var.uri or "",
-    " status=", res.status, " upstream_bytes=", #body)
+ngx.log(ngx.INFO, "junction upstream fetch uri=", ngx.var.uri or "",
+    " target=", target_url, " status=", res.status, " upstream_bytes=", #body)
 
 ngx.status = res.status
 
@@ -66,7 +45,7 @@ local skip_headers = {
     ["connection"] = true,
 }
 
-for key, value in pairs(res.header) do
+for key, value in pairs(res.headers) do
     if not skip_headers[key:lower()] then
         ngx.header[key] = value
     end
@@ -78,7 +57,7 @@ local ctx = {
     backend_base = ngx.ctx.backend_base,
 }
 
-local location = res.header["Location"]
+local location = res.headers["Location"] or res.headers["location"]
 if location and ctx.session_id and ctx.junction_prefix then
     local junction_base, junction_root = html_rewrite.junction_paths(
         ctx.junction_prefix,
@@ -101,7 +80,7 @@ if device.on_response_headers then
     device.on_response_headers(ctx)
 end
 
-local content_type = res.header["Content-Type"]
+local content_type = res.headers["Content-Type"] or res.headers["content-type"]
 local should_rewrite = html_rewrite.should_rewrite_response(content_type, ngx.var.uri)
 if device.should_rewrite_body then
     should_rewrite = device.should_rewrite_body(content_type, ngx.var.uri)
