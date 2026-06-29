@@ -2,19 +2,23 @@ local _M = {}
 
 local cjson
 
+local function usable_cjson(mod)
+    return type(mod) == "table" and type(mod.decode) == "function"
+end
+
 local function load_cjson()
-    if cjson then
+    if usable_cjson(cjson) then
         return cjson
     end
 
     local ok, mod = pcall(require, "cjson.safe")
-    if ok then
+    if ok and usable_cjson(mod) then
         cjson = mod
         return cjson
     end
 
     ok, mod = pcall(require, "cjson")
-    if ok then
+    if ok and usable_cjson(mod) then
         cjson = mod
         return cjson
     end

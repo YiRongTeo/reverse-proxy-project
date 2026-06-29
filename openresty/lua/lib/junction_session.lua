@@ -1,4 +1,12 @@
-local json = require "lib.json"
+local json_lib = package.loaded["lib.json"]
+if type(json_lib) ~= "table" then
+    json_lib = require "lib.json"
+end
+
+if type(json_lib) ~= "table" or type(json_lib.decode) ~= "function" then
+    json_lib = nil
+end
+
 local valkey = require "lib.valkey"
 
 local _M = {}
@@ -154,6 +162,10 @@ local function plain_url_session(raw)
 end
 
 local function try_decode_json(raw)
+    if not json_lib then
+        return nil, "json decoder unavailable"
+    end
+
     local candidates = { raw }
 
     local unescaped = raw:gsub('\\"', '"')
@@ -162,13 +174,13 @@ local function try_decode_json(raw)
     end
 
     for _, candidate in ipairs(candidates) do
-        local decoded, decode_err = json.decode(candidate)
+        local decoded, decode_err = json_lib.decode(candidate)
         if type(decoded) == "table" then
             return decoded
         end
 
         if type(decoded) == "string" then
-            local nested = json.decode(decoded)
+            local nested = json_lib.decode(decoded)
             if type(nested) == "table" then
                 return nested
             end
@@ -188,14 +200,16 @@ local function parse_session_value(raw)
 
     raw = strip_wrapping_quotes(raw)
 
-    local session = normalize_session_table(try_decode_json(raw))
-    if session then
-        return session
+    local session
+    if raw:find("{", 1, true) then
+        session = extract_json_fields(raw)
+        if session then
+            return session
+        end
     end
 
-    session = extract_json_fields(raw)
+    session = normalize_session_table(try_decode_json(raw))
     if session then
-        ngx.log(ngx.WARN, "session json decode failed, extracted fields from raw value")
         return session
     end
 
