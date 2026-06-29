@@ -125,9 +125,17 @@ Rewriting applies to `text/html`, JavaScript, CSS, and JSON responses. Compressi
 - `proxy_set_header Accept-Encoding ""` — asks upstream for plain text
 - `gunzip on` — decompresses gzip if the device ignores that and compresses anyway
 - `proxy_buffering on` — required so `body_filter` can buffer and rewrite the full body
+- `proxy_ignore_headers X-Accel-Buffering` — stops upstream from disabling buffering
+- `sendfile off` / `proxy_max_temp_file_size 0` — keeps the body in the filter chain
 - `gzip off` — prevents nginx from re-compressing the rewritten response
 
-Check `/var/log/nginx/error.log` for `junction rewrite enabled` or `junction rewrite skipped` messages.
+Check `/var/log/nginx/error.log` for:
+
+- `junction rewrite enabled` — header_filter armed rewriting
+- `junction body_filter entered` — body_filter phase is running
+- `junction rewrite applied` — body was rewritten
+
+If you see `enabled` but not `body_filter entered`, upstream is likely still bypassing filters (check for `X-Accel-Buffering: no` without ignore_headers).
 
 ## Environment variables
 

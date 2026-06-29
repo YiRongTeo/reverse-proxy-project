@@ -39,26 +39,27 @@ end
 
 local content_encoding = ngx.header["Content-Encoding"]
 if content_encoding and content_encoding ~= "" and content_encoding ~= "identity" then
-    if content_encoding == "gzip" then
-        -- gunzip in nginx.conf decompresses before body_filter; drop header so
-        -- the client does not try to inflate already-plain rewritten content.
-        ngx.header["Content-Encoding"] = nil
-        ngx.log(ngx.INFO, "junction rewrite: gunzip will decode upstream body (",
-            ngx.var.uri, ")")
-    else
+    if content_encoding ~= "gzip" then
         should_rewrite = false
         ngx.log(ngx.WARN, "junction rewrite skipped: unsupported Content-Encoding=",
             content_encoding, " uri=", ngx.var.uri)
+    else
+        -- Keep Content-Encoding: gzip so the gunzip filter can decompress before
+        -- body_filter runs. Do not strip it here.
+        ngx.log(ngx.INFO, "junction rewrite: upstream gzip body will be gunzipped (",
+            ngx.var.uri, ")")
     end
 end
 
 if should_rewrite then
     ngx.ctx.rewrite_body = true
+    ngx.var.rewrite_body = "1"
     ngx.header["Content-Length"] = nil
     ngx.header.content_length = nil
     ngx.log(ngx.INFO, "junction rewrite enabled for ", ngx.var.uri,
         " content-type=", content_type or "(none)")
 else
+    ngx.var.rewrite_body = "0"
     ngx.log(ngx.DEBUG, "junction rewrite disabled for ", ngx.var.uri,
         " content-type=", content_type or "(none)")
 end
@@ -67,7 +68,7 @@ local location = ngx.header["Location"]
 if location and ngx.ctx.session_id and ctx.junction_prefix then
     local junction_base, junction_root = html_rewrite.junction_paths(
         ctx.junction_prefix,
-        ngx.var.session_id
+        ngx.ctx.session_id
     )
 
     local rewritten = html_rewrite.rewrite_location(
