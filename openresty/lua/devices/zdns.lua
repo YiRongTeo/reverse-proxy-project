@@ -1,19 +1,19 @@
 --[[
-  Infoblox NIOS junction module.
+  ZDNS junction module.
 
   URI pattern:
-    /infoblox/{session_id}/...
+    /zdns/{session_id}/...
 
   Valkey value examples:
-    "https://10.10.10.10"
-    {"url":"https://10.10.10.10:443","device_type":"infoblox","host":"10.10.10.10"}
+    "https://10.10.10.20"
+    {"url":"https://10.10.10.20:443","device_type":"zdns","host":"10.10.10.20"}
 ]]
 
 local junction_device = require "lib.junction_device"
 
 return junction_device.new({
-    name = "infoblox",
-    junction_prefix = "/infoblox",
+    name = "zdns",
+    junction_prefix = "/zdns",
     cors_allow_headers = {
         "Authorization",
         "Content-Type",
@@ -21,7 +21,6 @@ return junction_device.new({
         "Accept",
         "Origin",
         "X-CSRF-Token",
-        "IBAP-Auth",
-        "IBAP-Session",
+        "X-Auth-Token",
     },
 })
