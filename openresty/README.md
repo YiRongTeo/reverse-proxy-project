@@ -108,6 +108,20 @@ location /mydevice/ {
 
 The nginx config stays small because each device owns its logic in Lua.
 
+## HTML / JS / CSS rewriting
+
+Device GUIs often emit root-absolute paths (`<base href="/">`, `src="/.../runtime.js"`, `fetch('/api/...')`) that break behind a junction. The F5 module rewrites these in the response body:
+
+| Pattern | Rewritten to |
+|---------|--------------|
+| `<base href="/">` | `<base href="/f5/{session_id}/">` |
+| `src="/path/to/runtime.js"` | `src="/f5/{session_id}/path/to/runtime.js"` |
+| `fetch('/api/v2/...')` | `fetch('/f5/{session_id}/api/v2/...')` |
+| `Location: /logout` | `Location: /f5/{session_id}/logout` |
+| `{{:host_addr}}` templates | proxy host |
+
+Rewriting applies to `text/html`, JavaScript, CSS, and JSON responses. `Accept-Encoding` is cleared on upstream requests so bodies are not gzip-compressed before rewrite.
+
 ## Environment variables
 
 | Variable | Default | Description |

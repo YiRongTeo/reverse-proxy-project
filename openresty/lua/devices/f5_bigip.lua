@@ -9,6 +9,8 @@
     {"url":"https://10.10.10.10:443","device_type":"f5_bigip"}
 ]]
 
+local html_rewrite = require "lib.html_rewrite"
+
 local _M = {}
 
 _M.name = "f5_bigip"
@@ -37,7 +39,6 @@ function _M.validate_session(session_id, session_data)
 end
 
 function _M.before_proxy(ctx)
-    -- F5 TMUI often expects a browser-like Host header and HTTPS semantics.
     ngx.ctx.f5_original_host = ctx.session.host
     return true
 end
@@ -52,27 +53,50 @@ function _M.configure_request_headers(ctx)
         ngx.req.set_header("Host", backend_host)
     end
 
-    -- BIG-IP frequently uses self-signed certificates behind the proxy.
+    -- Request uncompressed bodies so HTML/JS/CSS can be rewritten in body_filter.
+    ngx.req.clear_header("Accept-Encoding")
+
     ngx.req.set_header("X-Forwarded-Ssl", "on")
 end
 
+function _M.should_rewrite_body(content_type)
+    return html_rewrite.should_rewrite_content_type(content_type)
+end
+
+function _M.rewrite_body(body, junction_prefix, session_id, backend_base)
+    return html_rewrite.rewrite(body, junction_prefix, session_id, backend_base)
+end
+
 function _M.on_response_headers(ctx)
-    -- Rewrite Set-Cookie paths so browser cookies stay scoped to the junction.
     local prefix = _M.junction_prefix .. "/" .. (ctx.session_id or "") .. "/"
+
     local set_cookie = ngx.header["Set-Cookie"]
-    if not set_cookie then
-        return
-    end
-
-    if type(set_cookie) == "table" then
-        for i, cookie in ipairs(set_cookie) do
-            set_cookie[i] = cookie:gsub("Path=/", "Path=" .. prefix)
+    if set_cookie then
+        if type(set_cookie) == "table" then
+            for i, cookie in ipairs(set_cookie) do
+                set_cookie[i] = cookie:gsub("Path=/", "Path=" .. prefix)
+            end
+            ngx.header["Set-Cookie"] = set_cookie
+        else
+            ngx.header["Set-Cookie"] = set_cookie:gsub("Path=/", "Path=" .. prefix)
         end
-        ngx.header["Set-Cookie"] = set_cookie
-        return
     end
 
-    ngx.header["Set-Cookie"] = set_cookie:gsub("Path=/", "Path=" .. prefix)
+    -- Some F5/TMUI pages emit Refresh redirects with root-absolute paths.
+    local refresh = ngx.header["Refresh"]
+    if refresh then
+        local junction_base, junction_root = html_rewrite.junction_paths(
+            ctx.junction_prefix or _M.junction_prefix,
+            ctx.session_id
+        )
+
+        ngx.header["Refresh"] = refresh:gsub("url=(/[^%s;]+)", function(path)
+            if html_rewrite.needs_prefix(path, junction_base) then
+                return "url=" .. html_rewrite.prefix_path(path, junction_base, junction_root)
+            end
+            return "url=" .. path
+        end)
+    end
 end
 
 return _M

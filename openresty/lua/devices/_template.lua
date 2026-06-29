@@ -42,4 +42,8 @@ end
 function _M.on_response_headers(ctx)
 end
 
+function _M.should_rewrite_body(content_type)
+    return false
+end
+
 return _M

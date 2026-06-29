@@ -65,5 +65,7 @@ if device.configure_request_headers then
 end
 
 ngx.ctx.junction_device = device_name
+ngx.ctx.junction_prefix = junction_prefix
 ngx.ctx.session_id = session_id
+ngx.ctx.backend_base = session_data.url:gsub("/+$", "")
 ngx.var.session_id = session_id
