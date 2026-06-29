@@ -43,8 +43,6 @@ local skip_headers = {
     ["transfer-encoding"] = true,
     ["content-encoding"] = true,
     ["connection"] = true,
-    ["etag"] = true,
-    ["last-modified"] = true,
 }
 
 for key, value in pairs(res.headers) do
@@ -104,20 +102,8 @@ elseif should_rewrite and #body == 0 then
     ngx.log(ngx.WARN, "junction rewrite skipped: empty upstream body uri=",
         ngx.var.uri or "", " status=", res.status,
         " content-type=", content_type or "(none)")
-    if res.status == 304 then
-        return proxy_util.deny(ngx.HTTP_BAD_GATEWAY,
-            "upstream returned 304 Not Modified with no body")
-    end
-end
-
-if should_rewrite and #body > 0 then
-    ngx.header["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
-    ngx.header["Pragma"] = "no-cache"
 end
 
 if body and #body > 0 then
-    if res.status == 304 or res.status == 204 then
-        ngx.status = ngx.HTTP_OK
-    end
     ngx.print(body)
 end

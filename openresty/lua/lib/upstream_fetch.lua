@@ -18,15 +18,6 @@ local HOP_BY_HOP = {
     ["content-encoding"] = true,
 }
 
--- Conditional cache headers cause upstream 304 responses with no body.
-local CONDITIONAL = {
-    ["if-none-match"] = true,
-    ["if-modified-since"] = true,
-    ["if-match"] = true,
-    ["if-unmodified-since"] = true,
-    ["if-range"] = true,
-}
-
 local function append_query(url, args)
     if not args or args == "" then
         return url
@@ -39,13 +30,12 @@ local function append_query(url, args)
     return url .. "?" .. args
 end
 
-local function normalize_headers(headers, opts)
-    opts = opts or {}
+local function normalize_headers(headers)
     local out = {}
 
     for key, value in pairs(headers or {}) do
         local lower = key:lower()
-        if not HOP_BY_HOP[lower] and not CONDITIONAL[lower] then
+        if not HOP_BY_HOP[lower] then
             if type(value) == "table" then
                 out[key] = table.concat(value, ", ")
             else
@@ -56,14 +46,6 @@ local function normalize_headers(headers, opts)
 
     out["Accept-Encoding"] = "identity"
     out["Connection"] = "close"
-    out["Cache-Control"] = "no-cache, no-store"
-    out["Pragma"] = "no-cache"
-
-    if opts.force_fresh then
-        out["If-None-Match"] = nil
-        out["If-Modified-Since"] = nil
-    end
-
     return out
 end
 
@@ -154,38 +136,27 @@ function _M.fetch(url, opts)
 
     url = append_query(url, opts.args)
 
-    local function do_request(force_fresh)
-        local httpc = http.new()
-        httpc:set_timeout(opts.timeout or DEFAULT_TIMEOUT)
+    local httpc = http.new()
+    httpc:set_timeout(opts.timeout or DEFAULT_TIMEOUT)
 
-        return httpc:request_uri(url, {
-            method = opts.method or "GET",
-            headers = normalize_headers(opts.headers, { force_fresh = force_fresh }),
-            body = opts.body,
-            ssl_verify = false,
-            keepalive = false,
-        })
-    end
+    -- request_uri() already manages the connection lifecycle; do not call
+    -- set_keepalive() again afterward. Use keepalive=false for device backends
+    -- that send Connection: close over HTTPS.
+    local res, err = httpc:request_uri(url, {
+        method = opts.method or "GET",
+        headers = normalize_headers(opts.headers),
+        body = opts.body,
+        ssl_verify = false,
+        keepalive = false,
+    })
 
-    local res, err = do_request(false)
     if not res then
         return nil, "upstream request failed: " .. (err or "unknown")
     end
 
-    local body = res.body or ""
-    if (res.status == 304 or res.status == 204) and #body == 0 then
-        ngx.log(ngx.INFO, "upstream returned ", res.status,
-            " with empty body, retrying without cache validators")
-        res, err = do_request(true)
-        if not res then
-            return nil, "upstream retry failed: " .. (err or "unknown")
-        end
-        body = res.body or ""
-    end
-
     local headers = res.headers or {}
-    local decoded, decode_err = decode_body(body, headers)
-    if not decoded then
+    local body, decode_err = decode_body(res.body or "", headers)
+    if not body then
         return nil, decode_err
     end
 
@@ -193,15 +164,11 @@ function _M.fetch(url, opts)
     headers["content-encoding"] = nil
     headers["Connection"] = nil
     headers["connection"] = nil
-    headers["ETag"] = nil
-    headers["etag"] = nil
-    headers["Last-Modified"] = nil
-    headers["last-modified"] = nil
 
     return {
         status = res.status,
         headers = headers,
-        body = decoded,
+        body = body,
     }
 end
 
