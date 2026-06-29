@@ -35,6 +35,7 @@ local Z_STREAM_END = 1
 local Z_BUF_ERROR = -5
 local Z_NO_FLUSH = 0
 local GZIP_WINDOW_BITS = 15 + 16
+local DEFLATE_WINDOW_BITS = -15
 local CHUNK_SIZE = 65536
 
 function _M.is_gzip(data)
@@ -44,15 +45,11 @@ function _M.is_gzip(data)
         and data:byte(2) == 0x8b
 end
 
-function _M.inflate(data)
-    if not data or #data == 0 then
-        return data
-    end
-
+local function inflate_with_window(data, window_bits)
     local stream = ffi.new("z_stream")
-    local rc = zlib.inflateInit2_(stream, GZIP_WINDOW_BITS, ZLIB_VERSION, STREAM_SIZE)
+    local rc = zlib.inflateInit2_(stream, window_bits, ZLIB_VERSION, STREAM_SIZE)
     if rc ~= Z_OK then
-        return nil, "gzip inflateInit2 failed: " .. rc
+        return nil, "inflateInit2 failed: " .. rc
     end
 
     local in_buf = ffi.new("char[?]", #data)
@@ -79,10 +76,30 @@ function _M.inflate(data)
     zlib.inflateEnd(stream)
 
     if rc ~= Z_STREAM_END then
-        return nil, "gzip inflate failed: " .. rc
+        return nil, "inflate failed: " .. rc
     end
 
     return table.concat(chunks)
+end
+
+function _M.inflate_gzip(data)
+    if not data or #data == 0 then
+        return data
+    end
+
+    return inflate_with_window(data, GZIP_WINDOW_BITS)
+end
+
+function _M.inflate_deflate(data)
+    if not data or #data == 0 then
+        return data
+    end
+
+    return inflate_with_window(data, DEFLATE_WINDOW_BITS)
+end
+
+function _M.inflate(data)
+    return _M.inflate_gzip(data)
 end
 
 return _M

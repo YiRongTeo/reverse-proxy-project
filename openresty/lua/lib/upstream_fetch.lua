@@ -4,8 +4,6 @@ local http = require "resty.http"
 local _M = {}
 
 local DEFAULT_TIMEOUT = tonumber(os.getenv("UPSTREAM_TIMEOUT_MS")) or 300000
-local DEFAULT_KEEPALIVE = tonumber(os.getenv("UPSTREAM_KEEPALIVE_MS")) or 10000
-local DEFAULT_POOL_SIZE = tonumber(os.getenv("UPSTREAM_POOL_SIZE")) or 100
 
 local HOP_BY_HOP = {
     ["connection"] = true,
@@ -46,8 +44,8 @@ local function normalize_headers(headers)
         end
     end
 
-    -- Ask upstream for plain text; decompress below if it ignores this.
     out["Accept-Encoding"] = "identity"
+    out["Connection"] = "close"
     return out
 end
 
@@ -59,24 +57,71 @@ local function get_header(headers, name)
     return headers[name] or headers[name:lower()] or headers[name:upper()]
 end
 
+local function looks_binary(data)
+    if not data or #data < 8 then
+        return false
+    end
+
+    if gzip.is_gzip(data) then
+        return true
+    end
+
+    local sample = math.min(#data, 256)
+    local control = 0
+    for i = 1, sample do
+        local byte = data:byte(i)
+        if byte < 9 or (byte > 13 and byte < 32) then
+            control = control + 1
+        end
+    end
+
+    return control > (sample * 0.1)
+end
+
 local function decode_body(body, headers)
     local encoding = get_header(headers, "Content-Encoding")
     if encoding then
-        encoding = encoding:lower()
+        encoding = encoding:lower():match("^[%w%-]+")
     end
 
-    if encoding == "br" or encoding == "deflate" then
-        return nil, "unsupported Content-Encoding: " .. encoding
+    if encoding == "br" then
+        return nil, "unsupported Content-Encoding: br"
     end
 
     if encoding == "gzip" or gzip.is_gzip(body) then
-        local plain, err = gzip.inflate(body)
+        local plain, err = gzip.inflate_gzip(body)
         if not plain then
             return nil, err or "gzip decompression failed"
         end
 
         ngx.log(ngx.INFO, "upstream gzip decompressed bytes=", #body, "->", #plain)
         return plain
+    end
+
+    if encoding == "deflate" or encoding == "x-deflate" then
+        local plain, err = gzip.inflate_deflate(body)
+        if not plain then
+            return nil, err or "deflate decompression failed"
+        end
+
+        ngx.log(ngx.INFO, "upstream deflate decompressed bytes=", #body, "->", #plain)
+        return plain
+    end
+
+    if looks_binary(body) then
+        local plain, err = gzip.inflate_gzip(body)
+        if plain then
+            ngx.log(ngx.INFO, "upstream inferred gzip decompressed bytes=", #body, "->", #plain)
+            return plain
+        end
+
+        plain, err = gzip.inflate_deflate(body)
+        if plain then
+            ngx.log(ngx.INFO, "upstream inferred deflate decompressed bytes=", #body, "->", #plain)
+            return plain
+        end
+
+        return nil, "upstream body looks compressed but could not be decompressed"
     end
 
     return body
@@ -94,20 +139,19 @@ function _M.fetch(url, opts)
     local httpc = http.new()
     httpc:set_timeout(opts.timeout or DEFAULT_TIMEOUT)
 
+    -- request_uri() already manages the connection lifecycle; do not call
+    -- set_keepalive() again afterward. Use keepalive=false for device backends
+    -- that send Connection: close over HTTPS.
     local res, err = httpc:request_uri(url, {
         method = opts.method or "GET",
         headers = normalize_headers(opts.headers),
         body = opts.body,
         ssl_verify = false,
+        keepalive = false,
     })
 
     if not res then
         return nil, "upstream request failed: " .. (err or "unknown")
-    end
-
-    local ok, keepalive_err = httpc:set_keepalive(DEFAULT_KEEPALIVE, DEFAULT_POOL_SIZE)
-    if not ok then
-        ngx.log(ngx.WARN, "upstream keepalive failed: ", keepalive_err)
     end
 
     local headers = res.headers or {}
@@ -118,6 +162,8 @@ function _M.fetch(url, opts)
 
     headers["Content-Encoding"] = nil
     headers["content-encoding"] = nil
+    headers["Connection"] = nil
+    headers["connection"] = nil
 
     return {
         status = res.status,
