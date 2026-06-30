@@ -129,7 +129,13 @@ if should_rewrite and #body > 0 then
         body,
         ctx.junction_prefix,
         ctx.session_id,
-        ctx.backend_base
+        ctx.backend_base,
+        ctx.backend_host,
+        {
+            content_type = content_type,
+            uri = ngx.var.uri,
+            aggressive_absolute_rewrite = device.aggressive_absolute_rewrite == true,
+        }
     )
 
     ngx.log(ngx.INFO, "junction rewrite applied uri=", ngx.var.uri or "",

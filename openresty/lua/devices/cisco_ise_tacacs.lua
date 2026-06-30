@@ -163,13 +163,13 @@ function device.should_rewrite_body(content_type, uri)
     return base_should_rewrite_body(content_type, uri)
 end
 
-function device.rewrite_body(body, junction_prefix, session_id, backend_base)
+function device.rewrite_body(body, junction_prefix, session_id, backend_base, backend_host, rewrite_opts)
     local uri = ngx.var.uri or ""
     if is_javascript_servlet_uri(uri) then
         return rewrite_csrfguard(body)
     end
 
-    return base_rewrite_body(body, junction_prefix, session_id, backend_base)
+    return base_rewrite_body(body, junction_prefix, session_id, backend_base, backend_host, rewrite_opts)
 end
 
 function device.finalize_response_headers(ctx, body, res)

@@ -15,6 +15,7 @@ function _M.new(opts)
         name = opts.name,
         junction_prefix = opts.junction_prefix,
         junction_prefixes = opts.junction_prefixes,
+        aggressive_absolute_rewrite = opts.aggressive_absolute_rewrite == true,
         follow_redirects = opts.follow_redirects ~= false,
         max_redirects = opts.max_redirects or 10,
         cors = {
@@ -56,16 +57,19 @@ function _M.new(opts)
         return html_rewrite.should_rewrite_response(content_type, uri)
     end
 
-    function device.rewrite_body(body, junction_prefix, session_id, backend_base)
+    function device.rewrite_body(body, junction_prefix, session_id, backend_base, backend_host, rewrite_opts)
+        rewrite_opts = rewrite_opts or {}
+        if rewrite_opts.aggressive_absolute_rewrite == nil then
+            rewrite_opts.aggressive_absolute_rewrite = opts.aggressive_absolute_rewrite == true
+        end
+
         return html_rewrite.rewrite(
             body,
             junction_prefix,
             session_id,
             backend_base,
-            ngx.ctx.backend_host,
-            {
-                aggressive_absolute_rewrite = opts.aggressive_absolute_rewrite == true,
-            }
+            backend_host or ngx.ctx.backend_host,
+            rewrite_opts
         )
     end
 

@@ -113,6 +113,7 @@ curl http://localhost:8080/healthz
 | Infoblox NIOS | `/infoblox/{session_id}/` | `infoblox` | `devices/infoblox.lua` |
 | ZDNS | `/zdns/{session_id}/` | `zdns` | `devices/zdns.lua` |
 | Cisco ISE (TACACS) | `/ise/{session_id}/` | `cisco_ise_tacacs` | `devices/cisco_ise_tacacs.lua` |
+| FortiProxy | `/fortiproxy/{session_id}/` or `/fortiproxy_gui/{session_id}/` | `fortiproxy` or `fortiproxy_gui` | `devices/fortiproxy.lua` |
 
 Proxy examples (after seeding a session):
 
@@ -200,6 +201,12 @@ Check `/var/log/nginx/error.log` for:
 - `junction rewrite applied uri=... bytes=N->M` — body was rewritten
 
 If `upstream_bytes=0`, the device returned an empty body (redirect, 304, or HEAD).
+
+### JavaScript / regex safety
+
+Bundled device JavaScript (for example FortiProxy `main.js`) often contains quoted regex patterns such as `'/(?:foo|bar)/'`. The rewriter skips strings that look like regex (metacharacters, `/pattern/gi` suffixes) and uses **strict JavaScript mode** for `.js` responses: only paths that look like real URLs (`/api/...`, `/static/...`, `/login`, file extensions, query strings) are prefixed.
+
+If a device uses non-standard URL roots, add them to `JS_URL_ROOTS` in `lib/html_rewrite.lua` or create a device module that sets `strict_javascript = true` in `rewrite_body`.
 
 ## Environment variables
 

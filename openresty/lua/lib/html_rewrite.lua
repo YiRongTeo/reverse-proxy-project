@@ -138,6 +138,120 @@ function _M.extract_host(url)
     return url:match("^https?://([^:/]+)")
 end
 
+local REGEX_METACHAR = {
+    ["^"] = true,
+    ["$"] = true,
+    ["\\"] = true,
+    ["|"] = true,
+    ["("] = true,
+    [")"] = true,
+    ["["] = true,
+    ["]"] = true,
+    ["*"] = true,
+    ["+"] = true,
+    ["{"] = true,
+    ["}"] = true,
+}
+
+local JS_URL_ROOTS = {
+    api = true,
+    admin = true,
+    apps = true,
+    assets = true,
+    css = true,
+    dashboard = true,
+    forti = true,
+    fortiproxy = true,
+    js = true,
+    login = true,
+    logout = true,
+    modules = true,
+    ng = true,
+    proxy = true,
+    resources = true,
+    scripts = true,
+    static = true,
+    ui = true,
+}
+
+function _M.looks_like_url_path(path)
+    if not path or path == "" or path:sub(1, 1) ~= "/" or path:sub(1, 2) == "//" then
+        return false
+    end
+
+    -- Regex literal style suffix: /pattern/gimsuy
+    if path:match("/[gimsuy]+$") then
+        return false
+    end
+
+    for i = 1, #path do
+        if REGEX_METACHAR[path:sub(i, i)] then
+            return false
+        end
+    end
+
+    if path:find("?", 1, true) and not path:match("%?[%w%%&=.+-]") then
+        return false
+    end
+
+    if path:match("/%.%.?/?") or path:match("^/%.") then
+        return false
+    end
+
+    return true
+end
+
+function _M.looks_like_js_url_path(path)
+    if not _M.looks_like_url_path(path) then
+        return false
+    end
+
+    if path:match("%?[%w%%]") then
+        return true
+    end
+
+    if path:match("%.%w+$") then
+        return true
+    end
+
+    if path:match("^/[%w_-]+$") then
+        return true
+    end
+
+    local root = path:match("^/([^/]+)")
+    if root and JS_URL_ROOTS[root:lower()] then
+        return true
+    end
+
+    return false
+end
+
+function _M.is_javascript_content(content_type, uri)
+    if content_type then
+        local ct = content_type:lower()
+        if ct:find("javascript", 1, true) or ct:find("ecmascript", 1, true) then
+            return true
+        end
+    end
+
+    uri = uri or ""
+    return uri:lower():match("%.js$") ~= nil
+        or uri:lower():match("%.mjs$") ~= nil
+end
+
+local function should_rewrite_quoted_path(path, opts)
+    if not path or path == "" then
+        return false
+    end
+
+    opts = opts or {}
+    if opts.strict_javascript then
+        return _M.looks_like_js_url_path(path)
+    end
+
+    return _M.looks_like_url_path(path)
+end
+
 function _M.hosts_match(host_a, host_b)
     if not host_a or not host_b then
         return false
@@ -204,12 +318,17 @@ local function ci_attr_pattern(attr)
     return table.concat(parts)
 end
 
-function _M.rewrite_url_reference(url, junction_base, junction_root, backend_base, backend_host, aggressive)
+function _M.rewrite_url_reference(url, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
     if not url or url == "" then
         return url
     end
 
+    opts = opts or {}
+
     if url:sub(1, 1) == "/" and url:sub(1, 2) ~= "//" then
+        if not should_rewrite_quoted_path(url, opts) then
+            return url
+        end
         if _M.needs_prefix(url, junction_base) then
             return _M.prefix_path(url, junction_base, junction_root)
         end
@@ -241,7 +360,7 @@ function _M.rewrite_url_reference(url, junction_base, junction_root, backend_bas
         if path == "" then
             path = "/"
         end
-        if _M.needs_prefix(path, junction_base) then
+        if should_rewrite_quoted_path(path, opts) and _M.needs_prefix(path, junction_base) then
             return _M.prefix_path(path, junction_base, junction_root)
         end
     end
@@ -249,7 +368,7 @@ function _M.rewrite_url_reference(url, junction_base, junction_root, backend_bas
     return url
 end
 
-local function rewrite_attribute(body, attr, junction_base, junction_root, backend_base, backend_host, aggressive)
+local function rewrite_attribute(body, attr, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
     local attr_pattern = ci_attr_pattern(attr)
     local patterns = {
         { quote = '"', value = '([^"]+)' },
@@ -265,7 +384,8 @@ local function rewrite_attribute(body, attr, junction_base, junction_root, backe
                 junction_root,
                 backend_base,
                 backend_host,
-                aggressive
+                aggressive,
+                opts
             )
             return attr .. "=" .. item.quote .. rewritten .. item.quote
         end)
@@ -274,15 +394,20 @@ local function rewrite_attribute(body, attr, junction_base, junction_root, backe
     return body
 end
 
-local function rewrite_quoted_urls(body, junction_base, junction_root, backend_base, backend_host, aggressive)
+local function rewrite_quoted_urls(body, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
     body = body:gsub("([\"'])(/[^\"']*)", function(quote, path)
+        if not should_rewrite_quoted_path(path, opts) then
+            return quote .. path
+        end
+
         local rewritten = _M.rewrite_url_reference(
             path,
             junction_base,
             junction_root,
             backend_base,
             backend_host,
-            aggressive
+            aggressive,
+            opts
         )
         return quote .. rewritten
     end)
@@ -294,7 +419,8 @@ local function rewrite_quoted_urls(body, junction_base, junction_root, backend_b
             junction_root,
             backend_base,
             backend_host,
-            aggressive
+            aggressive,
+            opts
         )
         return quote .. rewritten
     end)
@@ -302,7 +428,7 @@ local function rewrite_quoted_urls(body, junction_base, junction_root, backend_b
     return body
 end
 
-local function rewrite_dom_src_setters(body, junction_base, junction_root, backend_base, backend_host, aggressive)
+local function rewrite_dom_src_setters(body, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
     return body:gsub("%.src%s*=%s*([\"'])([^\"']+)([\"'])", function(open_quote, value, close_quote)
         local rewritten = _M.rewrite_url_reference(
             value,
@@ -310,7 +436,8 @@ local function rewrite_dom_src_setters(body, junction_base, junction_root, backe
             junction_root,
             backend_base,
             backend_host,
-            aggressive
+            aggressive,
+            opts
         )
         return ".src=" .. open_quote .. rewritten .. close_quote
     end)
@@ -342,6 +469,10 @@ function _M.rewrite(body, junction_prefix, session_id, backend_base, backend_hos
     local aggressive = opts.aggressive_absolute_rewrite == true
     backend_host = backend_host or _M.extract_host(backend_base)
 
+    if opts.strict_javascript == nil then
+        opts.strict_javascript = _M.is_javascript_content(opts.content_type, opts.uri)
+    end
+
     local junction_base, junction_root = _M.junction_paths(junction_prefix, session_id)
     local proxy_origin = _M.proxy_origin()
 
@@ -363,7 +494,8 @@ function _M.rewrite(body, junction_prefix, session_id, backend_base, backend_hos
             junction_root,
             backend_base,
             backend_host,
-            aggressive
+            aggressive,
+            opts
         )
     end
 
@@ -374,7 +506,8 @@ function _M.rewrite(body, junction_prefix, session_id, backend_base, backend_hos
         junction_root,
         backend_base,
         backend_host,
-        aggressive
+        aggressive,
+        opts
     )
     body = rewrite_dom_src_setters(
         body,
@@ -382,7 +515,8 @@ function _M.rewrite(body, junction_prefix, session_id, backend_base, backend_hos
         junction_root,
         backend_base,
         backend_host,
-        aggressive
+        aggressive,
+        opts
     )
 
     return body
