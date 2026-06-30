@@ -204,7 +204,7 @@ If `upstream_bytes=0`, the device returned an empty body (redirect, 304, or HEAD
 
 ### JavaScript / regex safety
 
-Bundled device JavaScript (for example FortiProxy `main.js`) often contains quoted regex patterns such as `'/(?:foo|bar)/'`. The rewriter skips strings that look like regex (metacharacters, `/pattern/gi` suffixes) and uses **strict JavaScript mode** for `.js` responses: only paths that look like real URLs (`/api/...`, `/static/...`, `/login`, file extensions, query strings) are prefixed.
+Bundled device JavaScript (for example FortiProxy `main.js`) often contains quoted regex patterns such as `'/(?:foo|bar)/'` or `"/'/g"`. The rewriter skips strings that look like regex (metacharacters, `/pattern/gi` suffixes, `/'/g` sources) and does not match quotes inside regex literals like `/'/g`. It uses **strict JavaScript mode** for `.js` responses: only paths that look like real URLs (`/api/...`, `/static/...`, `/login`, file extensions, query strings) are prefixed.
 
 If a device uses non-standard URL roots, add them to `JS_URL_ROOTS` in `lib/html_rewrite.lua` or create a device module that sets `strict_javascript = true` in `rewrite_body`.
 

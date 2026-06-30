@@ -239,12 +239,40 @@ function _M.is_javascript_content(content_type, uri)
         or uri:lower():match("%.mjs$") ~= nil
 end
 
+local function looks_like_quoted_regex(content)
+    if not content or content == "" then
+        return true
+    end
+
+    if content == "/" or content == "//" then
+        return true
+    end
+
+    -- /pattern/flags inside quotes, or regex sources like /'/g
+    if content:match("^/.+/[gimsuy]*$") then
+        return true
+    end
+
+    if content:match("'/[gimsuy]*$") or content:match('"/[gimsuy]*$') then
+        return true
+    end
+
+    if content:match("^/'/") or content:match('^/"/') then
+        return true
+    end
+
+    return false
+end
+
 local function should_rewrite_quoted_path(path, opts)
-    if not path or path == "" then
+    if not path or path == "" or path == "/" then
         return false
     end
 
     opts = opts or {}
+    if looks_like_quoted_regex(path) then
+        return false
+    end
     if opts.strict_javascript then
         return _M.looks_like_js_url_path(path)
     end
@@ -394,14 +422,25 @@ local function rewrite_attribute(body, attr, junction_base, junction_root, backe
     return body
 end
 
-local function rewrite_quoted_urls(body, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
-    body = body:gsub("([\"'])(/[^\"']*)", function(quote, path)
-        if not should_rewrite_quoted_path(path, opts) then
-            return quote .. path
+local function rewrite_quoted_slash_string(body, quote, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
+    local open_pattern
+    local close_class
+    if quote == '"' then
+        open_pattern = '"(/[^"]*)"'
+        close_class = '"'
+    else
+        -- Do not match '/' in regex literals such as /'/g (quote preceded by /).
+        open_pattern = "%f[^/]'(/[^']*)'"
+        close_class = "'"
+    end
+
+    return body:gsub(open_pattern, function(content)
+        if looks_like_quoted_regex(content) or not should_rewrite_quoted_path(content, opts) then
+            return quote .. content .. close_class
         end
 
         local rewritten = _M.rewrite_url_reference(
-            path,
+            content,
             junction_base,
             junction_root,
             backend_base,
@@ -409,10 +448,19 @@ local function rewrite_quoted_urls(body, junction_base, junction_root, backend_b
             aggressive,
             opts
         )
-        return quote .. rewritten
+        return quote .. rewritten .. close_class
     end)
+end
 
-    body = body:gsub("([\"'])(https?://[^\"']*)", function(quote, url)
+local function rewrite_quoted_urls(body, junction_base, junction_root, backend_base, backend_host, aggressive, opts)
+    body = rewrite_quoted_slash_string(
+        body, '"', junction_base, junction_root, backend_base, backend_host, aggressive, opts
+    )
+    body = rewrite_quoted_slash_string(
+        body, "'", junction_base, junction_root, backend_base, backend_host, aggressive, opts
+    )
+
+    body = body:gsub('"(https?://[^"]*)"', function(url)
         local rewritten = _M.rewrite_url_reference(
             url,
             junction_base,
@@ -422,7 +470,20 @@ local function rewrite_quoted_urls(body, junction_base, junction_root, backend_b
             aggressive,
             opts
         )
-        return quote .. rewritten
+        return '"' .. rewritten .. '"'
+    end)
+
+    body = body:gsub("%f[^/]'(https?://[^']*)'", function(url)
+        local rewritten = _M.rewrite_url_reference(
+            url,
+            junction_base,
+            junction_root,
+            backend_base,
+            backend_host,
+            aggressive,
+            opts
+        )
+        return "'" .. rewritten .. "'"
     end)
 
     return body
